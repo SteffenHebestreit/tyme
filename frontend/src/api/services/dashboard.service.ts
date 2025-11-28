@@ -100,20 +100,34 @@ function calculateDurationMinutes(entry: TimeEntry): number {
 }
 
 function computeWeeklyHours(timeEntries: TimeEntry[], now: Date) {
-  const start = startOfWeek(now);
+  // Use Europe/Berlin timezone to match WeeklyHoursChart
+  const todayStr = now.toLocaleDateString('en-CA', { timeZone: 'Europe/Berlin' });
+  const [year, month, day] = todayStr.split('-').map(Number);
+  const todayUTC = new Date(Date.UTC(year, month - 1, day));
+  const dayOfWeek = todayUTC.getUTCDay();
+  
+  // Calculate Monday (start of week)
+  const mondayUTC = new Date(todayUTC);
+  mondayUTC.setUTCDate(todayUTC.getUTCDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
+  
+  // Day names starting from Monday
+  const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const;
+  
   return Array.from({ length: 7 }).map((_, index) => {
-    const day = addDays(start, index);
-    const nextDay = addDays(day, 1);
+    const dayUTC = new Date(mondayUTC);
+    dayUTC.setUTCDate(mondayUTC.getUTCDate() + index);
+    const dayStr = dayUTC.toISOString().split('T')[0];
+    
     const value = timeEntries
       .filter((entry: TimeEntry) => {
-        const startTime = safeParse(entry.start_time);
-        if (!startTime) return false;
-        return isWithinInterval(startTime, { start: day, end: nextDay });
+        if (!entry.entry_date) return false;
+        const entryDateStr = entry.entry_date.split('T')[0];
+        return entryDateStr === dayStr;
       })
-      .reduce((accumulator: number, entry: TimeEntry) => accumulator + calculateDurationMinutes(entry) / 60, 0);
+      .reduce((accumulator: number, entry: TimeEntry) => accumulator + (entry.duration_hours || 0), 0);
 
     return {
-      label: DAY_NAMES[day.getDay()],
+      label: dayNames[index],
       value: Number(value.toFixed(2)),
     };
   });
@@ -206,17 +220,35 @@ export async function fetchDashboardData(): Promise<DashboardData> {
   const thisMonthLabel = MONTH_NAMES_DE[now.getMonth()];
   const lastMonthLabel = MONTH_NAMES_DE[subMonths(now, 1).getMonth()];
 
+  // Calculate week range as ISO date strings (Monday to Sunday) in Europe/Berlin timezone
+  // This matches the WeeklyHoursChart calculation exactly
+  const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Berlin' });
+  const [year, month, day] = todayStr.split('-').map(Number);
+  const todayUTC = new Date(Date.UTC(year, month - 1, day));
+  const dayOfWeek = todayUTC.getUTCDay();
+  
+  // Calculate Monday (start of week)
+  const mondayUTC = new Date(todayUTC);
+  mondayUTC.setUTCDate(todayUTC.getUTCDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
+  
+  // Calculate Sunday (end of week)
+  const sundayUTC = new Date(mondayUTC);
+  sundayUTC.setUTCDate(mondayUTC.getUTCDate() + 6);
+  
+  const weekStartStr = mondayUTC.toISOString().split('T')[0];
+  const weekEndStr = sundayUTC.toISOString().split('T')[0];
+
   const metrics = {
     activeProjects: projects.filter((project: Project) => project.status === 'active').length,
     activeClients: clients.filter((client: Client) => client.status === 'active').length,
     hoursThisWeek: Number(
       timeEntries
         .filter((entry: TimeEntry) => {
-          const startTime = safeParse(entry.start_time);
-          if (!startTime) return false;
-          return isWithinInterval(startTime, { start: weekStart, end: weekEnd });
+          if (!entry.entry_date) return false;
+          const entryDateStr = entry.entry_date.split('T')[0];
+          return entryDateStr >= weekStartStr && entryDateStr <= weekEndStr;
         })
-        .reduce((accumulator: number, entry: TimeEntry) => accumulator + calculateDurationMinutes(entry) / 60, 0)
+        .reduce((accumulator: number, entry: TimeEntry) => accumulator + (entry.duration_hours || 0), 0)
         .toFixed(2)
     ),
     outstandingInvoiceCount: invoices.filter(
