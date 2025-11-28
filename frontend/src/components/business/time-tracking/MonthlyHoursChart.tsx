@@ -110,14 +110,17 @@ export const MonthlyHoursChart: FC<MonthlyHoursChartProps> = ({
   const [viewMode, setViewMode] = useState<ViewMode>('daily');
   const [groupMode, setGroupMode] = useState<GroupMode>('none');
   const [showFilters, setShowFilters] = useState(false);
+  const [holidaysLoaded, setHolidaysLoaded] = useState(false);
   
   // Get localization settings from localStorage
   const region = localStorage.getItem('user_region') || undefined;
   
-  // Prefetch holiday data for current year
+  // Prefetch holiday data for current year and trigger re-render when loaded
   useEffect(() => {
     const currentYear = new Date().getFullYear();
-    prefetchHolidays(currentYear, 'DE');
+    prefetchHolidays(currentYear, 'DE').then(() => {
+      setHolidaysLoaded(true);
+    });
   }, []);
   
   // Get current month range in Europe/Berlin timezone
@@ -332,7 +335,8 @@ export const MonthlyHoursChart: FC<MonthlyHoursChartProps> = ({
     return { labels, datasets: [] };
   }, [periodHours, groupMode, monthEntries, t]);
   
-  const chartOptions = {
+  // Memoize chart options with holidaysLoaded dependency to re-render when holidays are fetched
+  const chartOptions = useMemo(() => ({
     responsive: true,
     maintainAspectRatio: false,
     plugins: {
@@ -386,7 +390,7 @@ export const MonthlyHoursChart: FC<MonthlyHoursChartProps> = ({
         },
       },
     },
-  };
+  }), [groupMode, periodHours, region, holidaysLoaded]);
   
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
@@ -512,7 +516,7 @@ export const MonthlyHoursChart: FC<MonthlyHoursChartProps> = ({
       {/* Chart */}
       <div className="h-64">
         {periodHours.length > 0 ? (
-          <Bar data={chartData} options={chartOptions} />
+          <Bar key={`chart-${holidaysLoaded}`} data={chartData} options={chartOptions} />
         ) : (
           <div className="flex h-full items-center justify-center text-gray-500 dark:text-gray-400">
             {t('charts.monthlyHours.noData')}

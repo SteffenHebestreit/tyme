@@ -72,6 +72,10 @@ export default function GeneralSettingsPage() {
       try {
         const data = await getSettings();
         setSettings(data);
+        // Sync user_region to localStorage for use in charts
+        if (data.user_region) {
+          localStorage.setItem('user_region', data.user_region);
+        }
       } catch (error) {
         console.error('Failed to load settings:', error);
         setSaveMessage(t('admin.general.loadError') || 'Failed to load settings');

@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState, ReactNode, useCa
 import { keycloak, TOKEN_REFRESH_THRESHOLD, TOKEN_CHECK_INTERVAL } from '../config/keycloak.config';
 import { setTokens, clearTokens, getUserFromToken } from '../services/auth/tokenManager';
 import { useApp } from '../store/AppContext';
+import { getSettings } from '../api/services/settings.service';
 
 // Define user interface
 interface User {
@@ -109,6 +110,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
                 role: userInfo.roles.includes('admin') ? 'admin' : 'user',
               },
             });
+          }
+          
+          // Load settings to sync user_region to localStorage (for holiday coloring in charts)
+          try {
+            await getSettings();
+          } catch (e) {
+            console.warn('[Auth] Failed to load settings:', e);
           }
         } else {
           console.log('[Auth] ℹ️ User is not authenticated');

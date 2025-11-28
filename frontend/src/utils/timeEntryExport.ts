@@ -358,16 +358,14 @@ export async function exportTimeEntriesAsPDF(
   const totalHours = entries.reduce((sum, entry) => sum + (entry.duration_hours || 0), 0);
   const totalEntries = entries.length;
   
-  let currentPage = 1;
-  const totalPages = 3; // Task Summary, Daily Summary, Detailed Entries (Summary page not counted)
-  
   const docDefinition: TDocumentDefinitions = {
     pageSize: 'A4',
     pageMargins: [40, 60, 40, 60],
     
-    // Header
+    // Header with correct page numbering
     header: function(currentPage, pageCount) {
-      if (currentPage > totalPages) return null; // No header on summary page
+      // Last page is summary page - no header
+      if (currentPage === pageCount) return null;
       
       return {
         margin: [40, 20, 40, 0],
@@ -377,7 +375,7 @@ export async function exportTimeEntriesAsPDF(
             style: 'header',
           },
           {
-            text: `Seite ${currentPage} von ${totalPages}`,
+            text: `Seite ${currentPage} von ${pageCount - 1}`,
             style: 'pageNumber',
             alignment: 'right',
           },
@@ -385,29 +383,18 @@ export async function exportTimeEntriesAsPDF(
       };
     },
     
-    // Footer with page numbering (resets for each section)
+    // Footer with section names
     footer: function(currentPage, pageCount) {
-      if (currentPage > totalPages) return null; // No footer on summary page
+      // Last page is summary page - no footer
+      if (currentPage === pageCount) return null;
       
-      let sectionPage = currentPage;
-      let sectionName = '';
-      
-      if (currentPage === 1) {
-        sectionPage = 1;
-        sectionName = 'Aufgaben-Zusammenfassung';
-      } else if (currentPage === 2) {
-        sectionPage = 1;
-        sectionName = 'Tägliche Zusammenfassung';
-      } else if (currentPage === 3) {
-        sectionPage = 1;
-        sectionName = 'Detaillierte Zeiteinträge';
-      }
-      
+      // We use ID markers in content to track sections, but since pdfMake
+      // doesn't easily give us section info, we'll show a simple footer
       return {
         margin: [40, 0, 40, 20],
         columns: [
           {
-            text: sectionName,
+            text: `Seite ${currentPage} von ${pageCount - 1}`,
             style: 'footerSection',
             alignment: 'left',
           },

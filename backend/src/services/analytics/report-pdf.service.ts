@@ -1372,24 +1372,17 @@ async function generateTimeTrackingReportPDF(
     { text: formatCurrency(data.summary.billable_value, currency), fontSize: 8, bold: true, fillColor: '#f3f4f6', alignment: 'right' },
   ]);
 
-  // Custom footer with section-based page numbering
+  // Simple sequential page numbering
   const customFooter = (currentPage: number, pageCount: number): Content => {
-    // Determine which section we're in based on page number
-    // This is approximate - pdfmake doesn't give us exact section info
+    // Summary page (last page) - no footer
     if (currentPage === pageCount) {
-      // Summary page - no footer
       return { text: '', margin: [0, 0, 0, 0] } as Content;
     }
-    
-    // Estimate section based on total pages
-    const pagesPerSection = Math.floor((pageCount - 1) / 3);
-    let section = Math.min(2, Math.floor((currentPage - 1) / pagesPerSection));
-    let pageInSection = ((currentPage - 1) % pagesPerSection) + 1;
     
     return {
       columns: [
         {
-          text: `Seite ${pageInSection}`,
+          text: `Seite ${currentPage} von ${pageCount - 1}`,
           alignment: 'center',
           fontSize: 8,
           color: '#64748b',
