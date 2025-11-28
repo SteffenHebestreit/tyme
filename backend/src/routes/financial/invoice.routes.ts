@@ -569,6 +569,51 @@ router.post('/:id/items', invoiceController.addLineItems.bind(invoiceController)
 
 /**
  * @openapi
+ * /api/invoices/{id}/items:
+ *   put:
+ *     tags:
+ *       - Invoices
+ *     summary: Replace all line items for an invoice
+ *     description: Deletes all existing line items and adds new ones
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Invoice UUID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - items
+ *             properties:
+ *               items:
+ *                 type: array
+ *                 items:
+ *                   $ref: '#/components/schemas/InvoiceLineItem'
+ *     responses:
+ *       200:
+ *         description: Line items replaced successfully
+ *       400:
+ *         $ref: '#/components/responses/ValidationError'
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
+ *       404:
+ *         $ref: '#/components/responses/NotFound'
+ *       500:
+ *         $ref: '#/components/responses/ServerError'
+ */
+router.put('/:id/items', invoiceController.replaceLineItems.bind(invoiceController));
+
+/**
+ * @openapi
  * /api/invoices/generate-from-time-entries:
  *   post:
  *     tags:

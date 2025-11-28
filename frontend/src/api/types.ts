@@ -158,6 +158,7 @@ export interface InvoiceItem {
   quantity: number;
   unit_price: number;
   total_price: number;
+  rate_type?: 'hourly' | 'daily';
   created_at: string;
   time_entry_id?: string | null;
 }
@@ -235,6 +236,7 @@ export interface InvoiceLineItemPayload {
   unit_price: number;
   total_price: number;
   time_entry_id?: string | null;
+  rate_type?: 'hourly' | 'daily';
 }
 
 export interface GenerateInvoiceFromTimeEntriesPayload {

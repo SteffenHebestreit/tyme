@@ -176,6 +176,29 @@ export async function addInvoiceLineItems(
 }
 
 /**
+ * Replaces all line items for an invoice (deletes existing, adds new).
+ * Used when editing an invoice and updating its line items.
+ * 
+ * @async
+ * @param {string} id - UUID of the invoice
+ * @param {InvoiceLineItemPayload[]} items - Array of new line items to replace existing ones
+ * @returns {Promise<InvoiceWithItems>} Updated invoice with new line items
+ * @throws {Error} If invoice not found or operation fails
+ * 
+ * @example
+ * const updatedInvoice = await replaceInvoiceLineItems('invoice-uuid', [
+ *   { description: 'Development', quantity: 10, unit_price: 100, total_price: 1000 }
+ * ]);
+ */
+export async function replaceInvoiceLineItems(
+  id: string,
+  items: InvoiceLineItemPayload[]
+): Promise<InvoiceWithItems> {
+  const { data } = await apiClient.put<InvoiceResponse>(`/invoices/${id}/items`, { items });
+  return data.invoice;
+}
+
+/**
  * Generates a new invoice from billable time entries within a date range.
  * Automatically creates invoice, fetches matching time entries, and adds them as line items.
  * If only project_id is provided, derives client_id from the project.

@@ -220,5 +220,6 @@ export interface InvoiceItem {
   quantity: number;
   unit_price: number;
   total_price: number;
+  rate_type?: 'hourly' | 'daily';
   created_at: Date;
 }

@@ -200,6 +200,14 @@ export class InvoiceService {
       WHERE invoice_id = $1
       ORDER BY payment_date DESC, created_at DESC
     `;
+
+    // Get line items for this invoice
+    const itemsQuery = `
+      SELECT id, invoice_id, time_entry_id, description, quantity, unit_price, total_price, rate_type, created_at
+      FROM invoice_items
+      WHERE invoice_id = $1
+      ORDER BY created_at ASC
+    `;
     
     try {
       const result = await db.query(queryText, [id]);
@@ -210,6 +218,10 @@ export class InvoiceService {
       // Fetch payments for this invoice
       const paymentsResult = await db.query(paymentsQuery, [id]);
       (invoice as any).payments = paymentsResult.rows;
+
+      // Fetch line items for this invoice
+      const itemsResult = await db.query(itemsQuery, [id]);
+      (invoice as any).items = itemsResult.rows;
       
       return invoice;
     } catch (error) {
@@ -462,7 +474,7 @@ export class InvoiceService {
       const result = await db.query(
         `SELECT 
           SUM(ii.quantity * ii.unit_price) as sub_total,
-          SUM(ii.quantity * ii.unit_price * (i.tax_rate / 100)) as tax_amount
+          SUM(ii.quantity * ii.unit_price * i.tax_rate) as tax_amount
          FROM invoice_items ii 
          JOIN invoices i ON ii.invoice_id = i.id 
          WHERE ii.invoice_id = $1`,
@@ -497,8 +509,8 @@ export class InvoiceService {
       for (const item of items) {
         const queryText = `
           INSERT INTO invoice_items (
-            invoice_id, time_entry_id, description, quantity, unit_price, total_price
-          ) VALUES ($1, $2, $3, $4, $5, $6)
+            invoice_id, time_entry_id, description, quantity, unit_price, total_price, rate_type
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7)
         `;
         await db.query(queryText, [
           invoiceId,
@@ -506,7 +518,8 @@ export class InvoiceService {
           item.description,
           item.quantity,
           item.unit_price,
-          item.total_price
+          item.total_price,
+          item.rate_type || 'hourly'
         ]);
       }
 
@@ -515,6 +528,39 @@ export class InvoiceService {
     } catch (error) {
       console.error('Error adding line items:', error);
       throw new Error(`Failed to add line items: ${(error as any).message}`);
+    }
+  }
+
+  // Replace all line items for an invoice (delete existing, add new)
+  async replaceLineItems(invoiceId: string, items: InvoiceItem[]): Promise<void> {
+    const db = getDbClient();
+    try {
+      // Delete existing line items
+      await db.query('DELETE FROM invoice_items WHERE invoice_id = $1', [invoiceId]);
+
+      // Add new line items
+      for (const item of items) {
+        const queryText = `
+          INSERT INTO invoice_items (
+            invoice_id, time_entry_id, description, quantity, unit_price, total_price, rate_type
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+        `;
+        await db.query(queryText, [
+          invoiceId,
+          item.time_entry_id || null,
+          item.description,
+          item.quantity,
+          item.unit_price,
+          item.total_price,
+          item.rate_type || 'hourly'
+        ]);
+      }
+
+      // Recalculate totals after replacing items
+      await this.calculateInvoiceTotals(invoiceId);
+    } catch (error) {
+      console.error('Error replacing line items:', error);
+      throw new Error(`Failed to replace line items: ${(error as any).message}`);
     }
   }
 }

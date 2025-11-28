@@ -16,6 +16,7 @@ import {
   fetchInvoices,
   fetchInvoiceBillingStatus,
   generateInvoiceFromTimeEntries,
+  replaceInvoiceLineItems,
   updateInvoice,
   validateProposedPayment,
 } from '../../api/services/invoice.service';
@@ -225,6 +226,36 @@ export function useAddInvoiceLineItems() {
   return useMutation({
     mutationFn: ({ id, items }: { id: string; items: InvoiceLineItemPayload[] }) =>
       addInvoiceLineItems(id, items),
+    onSuccess: (_invoice: InvoiceWithItems, variables: { id: string; items: InvoiceLineItemPayload[] }) => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.invoices.all });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.invoices.detail(variables.id) });
+    },
+  });
+}
+
+/**
+ * Hook for replacing all line items of an invoice.
+ * Deletes existing line items and adds new ones.
+ * Used when editing an invoice and updating its line items.
+ * Automatically invalidates the invoice caches on success.
+ * 
+ * @returns {UseMutationResult} React Query mutation result
+ * 
+ * @example
+ * const replaceMutation = useReplaceInvoiceLineItems();
+ * 
+ * const handleReplace = () => {
+ *   replaceMutation.mutate({
+ *     id: 'invoice-uuid',
+ *     items: [{ description: 'Development', quantity: 10, unit_price: 100, total_price: 1000 }]
+ *   });
+ * };
+ */
+export function useReplaceInvoiceLineItems() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, items }: { id: string; items: InvoiceLineItemPayload[] }) =>
+      replaceInvoiceLineItems(id, items),
     onSuccess: (_invoice: InvoiceWithItems, variables: { id: string; items: InvoiceLineItemPayload[] }) => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.invoices.all });
       void queryClient.invalidateQueries({ queryKey: queryKeys.invoices.detail(variables.id) });

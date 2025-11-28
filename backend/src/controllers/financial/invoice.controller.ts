@@ -517,6 +517,51 @@ export class InvoiceController {
   }
 
   /**
+   * Replaces all line items for an invoice (deletes existing, adds new).
+   * Used when editing an invoice and updating its line items.
+   *
+   * @async
+   * @param {Request} req - Express request with params.id and body.items array
+   * @param {Response} res - Express response object
+   * @returns {Promise<void>} Sends 200 with updated invoice including new items
+   *
+   * @example
+   * PUT /api/invoices/123e4567-e89b-12d3-a456-426614174000/items
+   * Body: { items: [{ description: "Development", quantity: 10, unit_price: 100 }] }
+   * Response: 200 { message: "Line items replaced successfully", invoice: { ..., items: [...] } }
+   */
+  async replaceLineItems(req: Request, res: Response) {
+    const { error } = invoiceIdSchema.validate(req.params.id);
+    if (error) {
+      res.status(400).json({ message: 'Invalid Invoice ID.', details: error.details[0].message });
+      return;
+    }
+
+    try {
+      const validatedBody = req.body;
+      const { items } = validatedBody;
+
+      if (!Array.isArray(items)) {
+        res.status(400).json({ message: 'Items must be an array' });
+        return;
+      }
+
+      await this.invoiceService.replaceLineItems(req.params.id, items);
+
+      // Fetch updated invoice with line items
+      const updatedInvoice = await this.invoiceService.findById(req.params.id);
+
+      res.status(200).json({
+        message: 'Line items replaced successfully',
+        invoice: updatedInvoice,
+      });
+    } catch (err: any) {
+      console.error('Replace line items error:', err);
+      res.status(500).json({ message: err.message || 'Internal server error' });
+    }
+  }
+
+  /**
    * Generates an invoice from billable time entries within a date range.
    * Automatically creates invoice, fetches time entries matching criteria, and adds them as line items.
    * If only project_id is provided, derives client_id from the project.
@@ -999,12 +1044,13 @@ export class InvoiceController {
         COALESCE(p.name, ii.description) as description,
         SUM(ii.quantity) as quantity,
         ii.unit_price,
-        SUM(ii.quantity * ii.unit_price) as line_total
+        SUM(ii.quantity * ii.unit_price) as line_total,
+        COALESCE(ii.rate_type, 'hourly') as rate_type
       FROM invoice_items ii
       LEFT JOIN time_entries te ON ii.time_entry_id = te.id
       LEFT JOIN projects p ON te.project_id = p.id
       WHERE ii.invoice_id = $1
-      GROUP BY COALESCE(p.name, ii.description), ii.unit_price
+      GROUP BY COALESCE(p.name, ii.description), ii.unit_price, ii.rate_type
       ORDER BY MIN(ii.created_at)
     `;      const itemsResult = await this.db.query(itemsQuery, [id]);
       const lineItems = itemsResult.rows;
@@ -1262,6 +1308,11 @@ export class InvoiceController {
         total: 65
       };
 
+      // Determine rate type for column headers (use daily if all items are daily, otherwise hourly)
+      const allDaily = lineItems.length > 0 && lineItems.every((item: any) => item.rate_type === 'daily');
+      const quantityHeader = allDaily ? 'Menge (Tage)' : 'Menge (Std.)';
+      const rateHeader = allDaily ? '€/Tag' : '€/Std.';
+
       // Table header with gray background - full width
       doc.rect(45, tableStartY - 5, 505, 20)
          .fillAndStroke('#F0F0F0', '#CCCCCC');
@@ -1271,8 +1322,8 @@ export class InvoiceController {
          .font('Helvetica-Bold')
          .text('Nr.', colPositions.nr, tableStartY, { width: colWidths.nr, align: 'left', lineBreak: false })
          .text('Bezeichnung', colPositions.description, tableStartY, { width: colWidths.description, align: 'left', lineBreak: false })
-         .text('Menge (Std.)', colPositions.quantity, tableStartY, { width: colWidths.quantity, align: 'center', lineBreak: false })
-         .text('€/Std.', colPositions.unitPrice, tableStartY, { width: colWidths.unitPrice, align: 'right', lineBreak: false })
+         .text(quantityHeader, colPositions.quantity, tableStartY, { width: colWidths.quantity, align: 'center', lineBreak: false })
+         .text(rateHeader, colPositions.unitPrice, tableStartY, { width: colWidths.unitPrice, align: 'right', lineBreak: false })
          .text('Gesamt €', colPositions.total, tableStartY, { width: colWidths.total, align: 'right', lineBreak: false });
 
       // Table rows
@@ -1302,8 +1353,8 @@ export class InvoiceController {
              .font('Helvetica-Bold')
              .text('Nr.', colPositions.nr, tableY, { width: colWidths.nr, align: 'left', lineBreak: false })
              .text('Bezeichnung', colPositions.description, tableY, { width: colWidths.description, align: 'left', lineBreak: false })
-             .text('Menge (Std.)', colPositions.quantity, tableY, { width: colWidths.quantity, align: 'center', lineBreak: false })
-             .text('€/Std.', colPositions.unitPrice, tableY, { width: colWidths.unitPrice, align: 'right', lineBreak: false })
+             .text(quantityHeader, colPositions.quantity, tableY, { width: colWidths.quantity, align: 'center', lineBreak: false })
+             .text(rateHeader, colPositions.unitPrice, tableY, { width: colWidths.unitPrice, align: 'right', lineBreak: false })
              .text('Gesamt €', colPositions.total, tableY, { width: colWidths.total, align: 'right', lineBreak: false });
           
           tableY += 25;
@@ -1363,16 +1414,17 @@ export class InvoiceController {
 
       // Tax line (always show, even if 0%)
       tableY += 15;
-      const taxRate = parseFloat(invoice.tax_rate || '0');
+      const taxRateDecimal = parseFloat(invoice.tax_rate || '0');
+      const taxRatePercent = taxRateDecimal * 100; // Convert 0.19 to 19 for display
       const taxAmount = parseFloat(invoice.tax_amount || '0');
       doc.font('Helvetica')
-         .text(`zzgl. ${taxRate.toFixed(0)}% MwSt.`, totalsStartX, tableY, { width: 140, align: 'right' })
+         .text(`zzgl. ${taxRatePercent.toFixed(0)}% MwSt.`, totalsStartX, tableY, { width: 140, align: 'right' })
          .font('Helvetica-Bold')
          .text(formatCurrency(taxAmount, invoice.currency).replace(/[€$£¥]/g, '').trim(), 
                totalsValueX, tableY, { width: totalsWidth, align: 'right' });
 
       // Tax exemption notice (if applicable)
-      if (taxRate === 0) {
+      if (taxRateDecimal === 0) {
         tableY += 20;
         // Use tax exemption template, invoice-specific text, or default
         const exemptionNotice = invoice.tax_exemption_text || taxExemptionText;

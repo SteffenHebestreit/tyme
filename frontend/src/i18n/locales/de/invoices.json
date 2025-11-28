@@ -319,6 +319,32 @@
     "overdue": "Überfällig",
     "cancelled": "Storniert"
   },
+  "lineItems": {
+    "title": "Positionen",
+    "addItem": "Position hinzufügen",
+    "empty": "Noch keine Positionen hinzugefügt.",
+    "addFirstItem": "Erste Position hinzufügen",
+    "itemNumber": "Position {{number}}",
+    "subtotal": "Zwischensumme",
+    "rateType": {
+      "hourly": "Stunden",
+      "daily": "Tage"
+    },
+    "project": {
+      "placeholder": "Projekt auswählen..."
+    },
+    "description": {
+      "placeholder": "Beschreibung (z.B. Entwicklungsarbeit)"
+    },
+    "headers": {
+      "project": "Projekt",
+      "description": "Beschreibung",
+      "quantity": "Menge",
+      "rateType": "Typ",
+      "unitPrice": "Satz",
+      "total": "Gesamt"
+    }
+  },
   "messages": {
     "createSuccess": "Rechnung erfolgreich erstellt.",
     "updateSuccess": "Rechnung erfolgreich aktualisiert.",

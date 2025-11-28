@@ -274,6 +274,32 @@
     "overdue": "Overdue",
     "cancelled": "Cancelled"
   },
+  "lineItems": {
+    "title": "Line Items",
+    "addItem": "Add Item",
+    "empty": "No line items added yet.",
+    "addFirstItem": "Add your first item",
+    "itemNumber": "Item {{number}}",
+    "subtotal": "Subtotal",
+    "rateType": {
+      "hourly": "Hours",
+      "daily": "Days"
+    },
+    "project": {
+      "placeholder": "Select project..."
+    },
+    "description": {
+      "placeholder": "Description (e.g., Development work)"
+    },
+    "headers": {
+      "project": "Project",
+      "description": "Description",
+      "quantity": "Qty",
+      "rateType": "Type",
+      "unitPrice": "Rate",
+      "total": "Total"
+    }
+  },
   "messages": {
     "createSuccess": "Invoice created successfully.",
     "updateSuccess": "Invoice updated successfully.",

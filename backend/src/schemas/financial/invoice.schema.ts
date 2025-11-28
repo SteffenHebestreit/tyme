@@ -105,7 +105,7 @@ export const updateInvoiceSchema = Joi.object({
  * Schema for adding line items to an invoice.
  * Validates line item data with business rules:
  * - At least one item required
- * - quantity must be positive integer
+ * - quantity must be positive number (supports decimal for hours/days)
  * - unit_price and total_price have 2 decimal precision
  * - time_entry_id optional for linking to time tracking
  * 
@@ -120,10 +120,11 @@ export const addLineItemsSchema = Joi.object({
     Joi.object({
       id: Joi.string().guid({ version: ['uuidv4'] }).optional(), // Optional as DB might generate
       description: Joi.string().max(255).required(),
-      quantity: Joi.number().integer().positive().required(),
+      quantity: Joi.number().positive().required(), // Supports decimal hours/days
       unit_price: Joi.number().precision(2).min(0).required(), // e.g., 100.50
       total_price: Joi.number().precision(2).min(0).optional(), // Can be calculated by service or provided
       time_entry_id: Joi.string().guid({ version: ['uuidv4'] }).allow(null).optional(),
+      rate_type: Joi.string().valid('hourly', 'daily').default('hourly').optional(), // Rate type for display in PDF
     })
   ).min(1).required() // At least one item must be provided
 });
