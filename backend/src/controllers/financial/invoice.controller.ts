@@ -434,6 +434,143 @@ export class InvoiceController {
   }
 
   /**
+   * Creates a correction for an existing invoice.
+   * Stores the original invoice data and allows modifications.
+   * The original invoice data is preserved for generating correction PDFs.
+   * 
+   * @async
+   * @param {Request} req - Express request object with params.id and body with correction data
+   * @param {Response} res - Express response object
+   * @returns {Promise<void>} Sends 200 with corrected invoice
+   * 
+   * @example
+   * POST /api/invoices/123e4567-e89b-12d3-a456-426614174000/correct
+   * Body: { correction_reason: "Price adjustment", items: [...], notes: "..." }
+   * Response: 200 { message: "Invoice correction created", invoice: {...} }
+   */
+  async createCorrection(req: Request, res: Response) {
+    const { error } = invoiceIdSchema.validate(req.params.id);
+    if (error) {
+      res.status(400).json({ message: 'Invalid Invoice ID.', details: error.details[0].message });
+      return;
+    }
+
+    try {
+      // Fetch current invoice with all data
+      const currentInvoice = await this.invoiceService.findById(req.params.id);
+      
+      if (!currentInvoice) {
+        res.status(404).json({ message: 'Invoice not found' });
+        return;
+      }
+
+      // Only allow corrections for non-draft, non-cancelled invoices
+      if (currentInvoice.status === 'draft') {
+        res.status(400).json({ message: 'Draft invoices can be edited directly without creating a correction' });
+        return;
+      }
+
+      if (currentInvoice.status === 'cancelled') {
+        res.status(400).json({ message: 'Cannot create a correction for a cancelled invoice' });
+        return;
+      }
+
+      // Store original data snapshot before making changes
+      const originalData = {
+        invoice_number: currentInvoice.invoice_number,
+        issue_date: currentInvoice.issue_date,
+        due_date: currentInvoice.due_date,
+        delivery_date: currentInvoice.delivery_date,
+        sub_total: currentInvoice.sub_total,
+        tax_rate: currentInvoice.tax_rate,
+        tax_amount: currentInvoice.tax_amount,
+        total_amount: currentInvoice.total_amount,
+        currency: currentInvoice.currency,
+        notes: currentInvoice.notes,
+        invoice_headline: currentInvoice.invoice_headline,
+        invoice_text: currentInvoice.invoice_text,
+        footer_text: currentInvoice.footer_text,
+        items: (currentInvoice as any).items?.map((item: any) => ({
+          id: item.id,
+          description: item.description,
+          quantity: item.quantity,
+          unit_price: item.unit_price,
+          total: item.total,
+        })),
+      };
+
+      const { correction_reason, items, ...updateFields } = req.body;
+
+      // Build dynamic UPDATE query for invoice fields
+      const updateParts: string[] = [
+        'original_data = $1',
+        'correction_reason = $2',
+        'correction_date = NOW()',
+        'updated_at = NOW()'
+      ];
+      const updateValues: any[] = [JSON.stringify(originalData), correction_reason || 'Correction'];
+      let paramIndex = 3;
+
+      // Add any provided update fields (due_date, issue_date, notes, etc.)
+      const allowedFields = ['due_date', 'issue_date', 'delivery_date', 'notes', 'invoice_headline', 'invoice_text', 'footer_text'];
+      for (const field of allowedFields) {
+        if (updateFields[field] !== undefined) {
+          updateParts.push(`${field} = $${paramIndex}`);
+          updateValues.push(updateFields[field]);
+          paramIndex++;
+        }
+      }
+
+      // Add the invoice ID as the last parameter
+      updateValues.push(req.params.id);
+
+      // Update invoice with correction data and any changed fields
+      const correctedInvoice = await this.db.query(
+        `UPDATE invoices 
+         SET ${updateParts.join(', ')}
+         WHERE id = $${paramIndex}
+         RETURNING *`,
+        updateValues
+      );
+
+      // If there are line items updates, handle them
+      if (items && Array.isArray(items)) {
+        // Delete existing line items
+        await this.db.query('DELETE FROM invoice_items WHERE invoice_id = $1', [req.params.id]);
+        
+        // Insert new line items
+        for (const item of items) {
+          await this.db.query(
+            `INSERT INTO invoice_items (invoice_id, description, quantity, unit_price, total_price)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [
+              req.params.id,
+              item.description,
+              item.quantity,
+              item.unit_price,
+              item.quantity * item.unit_price,
+            ]
+          );
+        }
+
+        // Recalculate totals using the service method
+        await this.invoiceService.calculateInvoiceTotals(req.params.id);
+      }
+
+      // Fetch the updated invoice with all relations
+      const updatedInvoice = await this.invoiceService.findById(req.params.id);
+
+      res.status(200).json({
+        message: 'Invoice correction created successfully',
+        invoice: updatedInvoice,
+      });
+    } catch (err: any) {
+      console.error('Create correction error:', err);
+      res.status(500).json({ message: err.message || 'Internal server error' });
+    }
+  }
+
+  /**
    * Deletes an invoice from the database.
    * May fail if the invoice has associated line items (foreign key constraint).
    * 
@@ -1513,6 +1650,295 @@ export class InvoiceController {
       // ==================== DRAW FOOTER ON FIRST PAGE ====================
       drawFooter();
 
+      // ==================== APPEND STORNO PAGE IF INVOICE IS CANCELLED ====================
+      if (invoice.status === 'cancelled') {
+        doc.addPage();
+        
+        // Storno Header
+        doc.fontSize(18)
+           .fillColor('#DC2626')
+           .font('Helvetica-Bold')
+           .text('STORNORECHNUNG', 50, 50);
+
+        doc.fontSize(10)
+           .fillColor('#000000')
+           .font('Helvetica')
+           .text(`Stornierung der Rechnung Nr. ${invoice.invoice_number} vom ${formatDate(invoice.issue_date)}`, 50, 80);
+
+        // Storno date
+        const stornoDate = new Date().toLocaleDateString('de-DE', {
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric'
+        });
+        doc.fontSize(9)
+           .text(`Stornodatum: ${stornoDate}`, 50, 110);
+
+        // Storno explanation
+        doc.fontSize(10)
+           .text('Sehr geehrte Damen und Herren,', 50, 150);
+        doc.text('hiermit stornieren wir die oben genannte Rechnung vollständig.', 50, 170, { width: 495 });
+
+        // Original invoice reference box
+        doc.rect(45, 210, 505, 80).stroke('#DC2626');
+        doc.fontSize(10).font('Helvetica-Bold').fillColor('#DC2626')
+           .text('Stornierte Rechnung:', 55, 220);
+        doc.fontSize(9).font('Helvetica').fillColor('#000000')
+           .text(`Rechnungsnummer: ${invoice.invoice_number}`, 65, 240)
+           .text(`Rechnungsdatum: ${formatDate(invoice.issue_date)}`, 65, 255)
+           .text(`Ursprünglicher Betrag: ${formatCurrency(parseFloat(invoice.total_amount), invoice.currency)}`, 65, 270);
+
+        // Storno amount (negative)
+        doc.fontSize(11).font('Helvetica-Bold').fillColor('#DC2626')
+           .text('Stornobetrag:', 50, 320)
+           .text(`-${formatCurrency(parseFloat(invoice.total_amount), invoice.currency)}`, 400, 320, { width: 145, align: 'right' });
+
+        // Net effect
+        doc.fontSize(10).font('Helvetica').fillColor('#000000')
+           .text('Nettowirkung: 0,00 €', 50, 350);
+
+        // Footer text
+        doc.fontSize(10)
+           .text('Diese Stornorechnung ist zusammen mit der Originalrechnung aufzubewahren.', 50, 400, { width: 495 })
+           .text('Mit freundlichen Grüßen', 50, 440);
+
+        if (settings.company_name) {
+          doc.text(settings.company_name, 50, 460);
+        }
+      }
+
+      // ==================== APPEND CORRECTION PAGE IF INVOICE HAS CORRECTIONS ====================
+      if (invoice.original_data) {
+        let originalData: any = null;
+        try {
+          originalData = typeof invoice.original_data === 'string' 
+            ? JSON.parse(invoice.original_data) 
+            : invoice.original_data;
+        } catch (e) {
+          console.error('Failed to parse original_data:', e);
+        }
+
+        if (originalData) {
+          doc.addPage();
+          
+          // Correction Header
+          doc.fontSize(18)
+             .fillColor('#D97706')
+             .font('Helvetica-Bold')
+             .text('RECHNUNGSKORREKTUR', 50, 50);
+
+          doc.fontSize(10)
+             .fillColor('#000000')
+             .font('Helvetica')
+             .text(`Korrektur zur Rechnung Nr. ${invoice.invoice_number} vom ${formatDate(invoice.issue_date)}`, 50, 80);
+
+          // Correction date
+          const correctionDate = invoice.correction_date 
+            ? formatDate(invoice.correction_date)
+            : new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
+          doc.fontSize(9)
+             .text(`Korrekturdatum: ${correctionDate}`, 50, 110);
+
+          // Greeting
+          let corrY = 140;
+          doc.fontSize(10)
+             .text('Sehr geehrte Damen und Herren,', 50, corrY);
+          corrY += 20;
+          doc.text('hiermit korrigieren wir die oben genannte Rechnung wie folgt:', 50, corrY, { width: 495 });
+          corrY += 30;
+
+          // Correction reason
+          doc.fontSize(10).font('Helvetica-Bold').fillColor('#333333')
+             .text('Korrektur:', 50, corrY);
+          corrY += 18;
+          const correctionReason = invoice.correction_reason || 'Korrektur der Rechnung';
+          doc.fontSize(9).font('Helvetica').fillColor('#000000')
+             .text(correctionReason, 60, corrY, { width: 480 });
+          corrY += 30;
+
+          // Detect what changed - use helper to normalize dates for comparison
+          const normalizeDate = (d: any): string => {
+            if (!d) return '';
+            const date = new Date(d);
+            if (isNaN(date.getTime())) return '';
+            return date.toISOString().split('T')[0]; // YYYY-MM-DD
+          };
+          
+          const normalizeString = (s: any): string => {
+            if (s === null || s === undefined) return '';
+            return String(s).trim();
+          };
+
+          const changes: { field: string; oldValue: string; newValue: string }[] = [];
+          
+          // Compare dates by normalized date string
+          if (originalData.due_date && normalizeDate(originalData.due_date) !== normalizeDate(invoice.due_date)) {
+            changes.push({
+              field: 'Fälligkeitsdatum',
+              oldValue: formatDate(originalData.due_date),
+              newValue: formatDate(invoice.due_date)
+            });
+          }
+          if (originalData.issue_date && normalizeDate(originalData.issue_date) !== normalizeDate(invoice.issue_date)) {
+            changes.push({
+              field: 'Rechnungsdatum',
+              oldValue: formatDate(originalData.issue_date),
+              newValue: formatDate(invoice.issue_date)
+            });
+          }
+          if (originalData.total_amount && parseFloat(originalData.total_amount) !== parseFloat(invoice.total_amount)) {
+            changes.push({
+              field: 'Rechnungsbetrag',
+              oldValue: formatCurrency(parseFloat(originalData.total_amount), invoice.currency),
+              newValue: formatCurrency(parseFloat(invoice.total_amount), invoice.currency)
+            });
+          }
+          // Compare notes with normalization (null, undefined, empty string all equal)
+          if (normalizeString(originalData.notes) !== normalizeString(invoice.notes)) {
+            changes.push({
+              field: 'Anmerkungen',
+              oldValue: originalData.notes || '(keine)',
+              newValue: invoice.notes || '(keine)'
+            });
+          }
+
+          // Display field changes table
+          if (changes.length > 0) {
+            doc.fontSize(10).font('Helvetica-Bold').fillColor('#333333')
+               .text('Geänderte Felder:', 50, corrY);
+            corrY += 18;
+
+            // Table header
+            doc.rect(45, corrY - 5, 505, 20).fillAndStroke('#FFF3E0', '#FF9800');
+            doc.fontSize(8).fillColor('#000000').font('Helvetica-Bold')
+               .text('Feld', 55, corrY)
+               .text('Ursprünglicher Wert', 180, corrY, { width: 150 })
+               .text('Neuer Wert', 380, corrY, { width: 150 });
+            corrY += 22;
+
+            changes.forEach((change) => {
+              doc.fontSize(9).font('Helvetica')
+                 .fillColor('#333333').text(change.field, 55, corrY)
+                 .fillColor('#999999').text(change.oldValue, 180, corrY, { width: 150 })
+                 .fillColor('#2E7D32').text(change.newValue, 380, corrY, { width: 150 });
+              corrY += 18;
+            });
+            corrY += 15;
+          }
+
+          // Check if items changed
+          let itemsChanged = false;
+          if (originalData.items && lineItems) {
+            if (originalData.items.length !== lineItems.length) {
+              itemsChanged = true;
+            } else {
+              for (let i = 0; i < lineItems.length; i++) {
+                const origItem = originalData.items[i];
+                const currItem = lineItems[i];
+                if (
+                  parseFloat(origItem.quantity) !== parseFloat(currItem.quantity) ||
+                  parseFloat(origItem.unit_price) !== parseFloat(currItem.unit_price) ||
+                  origItem.description !== currItem.description
+                ) {
+                  itemsChanged = true;
+                  break;
+                }
+              }
+            }
+          }
+
+          // Show position tables only if items changed
+          if (itemsChanged) {
+            const colPos = { nr: 50, desc: 90, qty: 330, price: 410, total: 480 };
+
+            // New positions
+            doc.fontSize(10).font('Helvetica-Bold').fillColor('#333333')
+               .text('Korrigierte Positionen:', 50, corrY);
+            corrY += 18;
+
+            doc.rect(45, corrY - 5, 505, 20).fillAndStroke('#E8F5E9', '#4CAF50');
+            doc.fontSize(8).fillColor('#000000').font('Helvetica-Bold')
+               .text('Pos.', colPos.nr, corrY)
+               .text('Beschreibung', colPos.desc, corrY)
+               .text('Menge', colPos.qty, corrY, { width: 70, align: 'right' })
+               .text('Einzelpreis', colPos.price, corrY, { width: 65, align: 'right' })
+               .text('Gesamt', colPos.total, corrY, { width: 65, align: 'right' });
+            corrY += 22;
+
+            lineItems.forEach((item: any, idx: number) => {
+              doc.fontSize(9).font('Helvetica').fillColor('#2E7D32')
+                 .text((idx + 1).toString(), colPos.nr, corrY)
+                 .text(item.description || 'Leistung', colPos.desc, corrY, { width: 230 })
+                 .text(parseFloat(item.quantity).toFixed(2), colPos.qty, corrY, { width: 70, align: 'right' })
+                 .text(formatCurrency(parseFloat(item.unit_price), invoice.currency), colPos.price, corrY, { width: 65, align: 'right' })
+                 .text(formatCurrency(parseFloat(item.line_total), invoice.currency), colPos.total, corrY, { width: 65, align: 'right' });
+              corrY += 18;
+            });
+
+            doc.moveTo(45, corrY + 5).lineTo(550, corrY + 5).stroke('#4CAF50');
+            corrY += 15;
+            doc.fontSize(9).font('Helvetica-Bold').fillColor('#2E7D32')
+               .text('Korrigierter Betrag:', 380, corrY)
+               .text(formatCurrency(parseFloat(invoice.total_amount), invoice.currency), 480, corrY, { width: 65, align: 'right' });
+            corrY += 30;
+
+            // Original positions
+            if (originalData.items && originalData.items.length > 0) {
+              doc.fontSize(10).font('Helvetica-Bold').fillColor('#666666')
+                 .text('Ursprüngliche Positionen (zum Vergleich):', 50, corrY);
+              corrY += 18;
+
+              doc.rect(45, corrY - 5, 505, 20).fillAndStroke('#F5F5F5', '#CCCCCC');
+              doc.fontSize(8).fillColor('#666666').font('Helvetica-Bold')
+                 .text('Pos.', colPos.nr, corrY)
+                 .text('Beschreibung', colPos.desc, corrY)
+                 .text('Menge', colPos.qty, corrY, { width: 70, align: 'right' })
+                 .text('Einzelpreis', colPos.price, corrY, { width: 65, align: 'right' })
+                 .text('Gesamt', colPos.total, corrY, { width: 65, align: 'right' });
+              corrY += 22;
+
+              originalData.items.forEach((item: any, idx: number) => {
+                const itemTotal = parseFloat(item.quantity) * parseFloat(item.unit_price);
+                doc.fontSize(9).font('Helvetica').fillColor('#999999')
+                   .text((idx + 1).toString(), colPos.nr, corrY)
+                   .text(item.description || 'Leistung', colPos.desc, corrY, { width: 230 })
+                   .text(parseFloat(item.quantity).toFixed(2), colPos.qty, corrY, { width: 70, align: 'right' })
+                   .text(formatCurrency(parseFloat(item.unit_price), invoice.currency), colPos.price, corrY, { width: 65, align: 'right' })
+                   .text(formatCurrency(itemTotal, invoice.currency), colPos.total, corrY, { width: 65, align: 'right' });
+                corrY += 18;
+              });
+
+              doc.moveTo(45, corrY + 5).lineTo(550, corrY + 5).stroke('#CCCCCC');
+              corrY += 15;
+              doc.fontSize(9).font('Helvetica').fillColor('#999999')
+                 .text('Ursprünglicher Betrag:', 380, corrY)
+                 .text(formatCurrency(parseFloat(originalData.total_amount), invoice.currency), 480, corrY, { width: 65, align: 'right' });
+
+              // Difference
+              const diff = parseFloat(invoice.total_amount) - parseFloat(originalData.total_amount);
+              if (diff !== 0) {
+                corrY += 15;
+                const diffColor = diff > 0 ? '#D32F2F' : '#2E7D32';
+                const diffSign = diff > 0 ? '+' : '';
+                doc.fontSize(9).font('Helvetica-Bold').fillColor(diffColor)
+                   .text('Differenz:', 380, corrY)
+                   .text(diffSign + formatCurrency(diff, invoice.currency), 480, corrY, { width: 65, align: 'right' });
+              }
+              corrY += 30;
+            }
+          }
+
+          // Footer
+          doc.fontSize(10).font('Helvetica').fillColor('#000000')
+             .text('Diese Rechnungskorrektur ist zusammen mit der Originalrechnung aufzubewahren.', 50, corrY, { width: 495 });
+          corrY += 30;
+          doc.text('Mit freundlichen Grüßen', 50, corrY);
+          if (settings.company_name) {
+            doc.text(settings.company_name, 50, corrY + 15);
+          }
+        }
+      }
+
       // Finalize PDF and send when complete
       doc.end();
       
@@ -1721,6 +2147,811 @@ export class InvoiceController {
     } catch (err: any) {
       console.error('Get placeholders error:', err);
       res.status(500).json({ message: err.message || 'Failed to get placeholders' });
+    }
+  }
+
+  /**
+   * Generates a Storno (cancellation/credit note) PDF for an invoice.
+   * Creates a document that cancels the original invoice with negative amounts.
+   * 
+   * @async
+   * @param {Request} req - Express request object with invoice ID in params
+   * @param {Response} res - Express response object
+   * @returns {Promise<void>} Sends PDF file as download or error response
+   * 
+   * @example
+   * GET /api/invoices/:id/storno-pdf
+   * Response: 200 (PDF file download)
+   */
+  async generateStornoPDF(req: Request, res: Response) {
+    const { id } = req.params;
+    const userId = (req as any).user?.id;
+
+    try {
+      // Helper function to format currency in German style
+      const formatCurrency = (amount: number, currency: string = 'EUR'): string => {
+        return new Intl.NumberFormat('de-DE', {
+          style: 'currency',
+          currency: currency,
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2
+        }).format(amount);
+      };
+
+      // Helper function to format dates in German style
+      const formatDate = (dateString: string): string => {
+        const date = new Date(dateString);
+        return date.toLocaleDateString('de-DE', {
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric'
+        });
+      };
+
+      // Fetch user settings for company information
+      const settingsResult = await this.db.query(
+        'SELECT * FROM settings WHERE user_id = $1',
+        [userId]
+      );
+      const settings = settingsResult.rows[0] || {};
+
+      // Fetch invoice with all details
+      const queryText = `
+        SELECT i.*, 
+               c.name as client_name, c.email as client_email, c.phone as client_phone,
+               c.address as client_address, c.city as client_city, c.postal_code as client_postal_code,
+               c.use_separate_billing_address, c.billing_contact_person, c.billing_email, c.billing_phone,
+               c.billing_address, c.billing_city, c.billing_state, c.billing_postal_code, c.billing_country,
+               p.name as project_name
+        FROM invoices i
+        LEFT JOIN clients c ON i.client_id = c.id
+        LEFT JOIN projects p ON i.project_id = p.id
+        WHERE i.id = $1 AND i.user_id = $2
+      `;
+      
+      const invoiceResult = await this.db.query(queryText, [id, userId]);
+      
+      if (invoiceResult.rows.length === 0) {
+        res.status(404).json({ message: 'Invoice not found' });
+        return;
+      }
+
+      const invoice = invoiceResult.rows[0];
+
+      // Fetch line items
+      const itemsQuery = `
+        SELECT 
+          COALESCE(p.name, ii.description) as description,
+          SUM(ii.quantity) as quantity,
+          ii.unit_price,
+          SUM(ii.quantity * ii.unit_price) as line_total,
+          COALESCE(ii.rate_type, 'hourly') as rate_type
+        FROM invoice_items ii
+        LEFT JOIN time_entries te ON ii.time_entry_id = te.id
+        LEFT JOIN projects p ON te.project_id = p.id
+        WHERE ii.invoice_id = $1
+        GROUP BY COALESCE(p.name, ii.description), ii.unit_price, ii.rate_type
+        ORDER BY MIN(ii.created_at)
+      `;
+      const itemsResult = await this.db.query(itemsQuery, [id]);
+      const lineItems = itemsResult.rows;
+
+      // Create PDF document
+      const doc = new PDFDocument({ 
+        margin: 50, 
+        size: 'A4',
+        bufferPages: true
+      });
+
+      let pdfBuffers: Buffer[] = [];
+      const bufferStream = new (require('stream').PassThrough)();
+      bufferStream.on('data', (chunk: Buffer) => pdfBuffers.push(chunk));
+      
+      doc.on('error', (docError: any) => {
+        console.error('PDFDocument error:', docError);
+        bufferStream.destroy(docError);
+      });
+      
+      doc.pipe(bufferStream);
+
+      // ==================== HEADER SECTION ====================
+      // Right side - Company Info
+      const safeCompanyName = (settings.company_name || 'Company Name').toString().substring(0, 100);
+      doc.fontSize(16)
+         .fillColor('#6B8EAF')
+         .font('Helvetica-Bold')
+         .text(safeCompanyName, 350, 50, { align: 'right', width: 195, lineBreak: false });
+      
+      if (settings.company_subline) {
+        doc.fontSize(10)
+           .fillColor('#666666')
+           .font('Helvetica')
+           .text(settings.company_subline.toString().substring(0, 100), 350, 72, { align: 'right', width: 195, lineBreak: false });
+      }
+
+      // Contact details (right side)
+      const contactY = settings.company_subline ? 100 : 80;
+      doc.fontSize(8).fillColor('#333333');
+      
+      if (settings.company_phone) {
+        doc.text(`Tel.: ${settings.company_phone}`, 350, contactY, { align: 'right', width: 195, lineBreak: false });
+      }
+      if (settings.company_email) {
+        doc.text(`E-Mail: ${settings.company_email}`, 350, contactY + 12, { align: 'right', width: 195, lineBreak: false });
+      }
+      if (settings.company_tax_id) {
+        doc.text(`USt-IdNr.: ${settings.company_tax_id}`, 350, contactY + 24, { align: 'right', width: 195, lineBreak: false });
+      }
+
+      // Storno date and reference (right side)
+      const datesY = contactY + 48;
+      const stornoDate = new Date().toLocaleDateString('de-DE', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric'
+      });
+      
+      doc.fontSize(8)
+         .fillColor('#333333')
+         .font('Helvetica-Bold')
+         .text('Stornodatum: ', 350, datesY, { continued: true })
+         .font('Helvetica')
+         .text(stornoDate, { align: 'right', width: 195, lineBreak: false });
+      
+      doc.font('Helvetica-Bold')
+         .text('Bezug auf Rechnung: ', 350, datesY + 12, { continued: true })
+         .font('Helvetica')
+         .text(invoice.invoice_number, { align: 'right', width: 195, lineBreak: false });
+      
+      doc.font('Helvetica-Bold')
+         .text('Rechnungsdatum: ', 350, datesY + 24, { continued: true })
+         .font('Helvetica')
+         .text(formatDate(invoice.issue_date), { align: 'right', width: 195, lineBreak: false });
+
+      // ==================== LEFT SIDE - SENDER & RECIPIENT ====================
+      const senderAddress = settings.company_address || 'Company Address';
+      doc.fontSize(7)
+         .fillColor('#999999')
+         .font('Helvetica')
+         .text(`${settings.company_name || 'Company'}, ${senderAddress}`, 50, 50);
+
+      // Recipient address
+      const recipientY = 75;
+      const useBilling = invoice.use_separate_billing_address;
+      const recipientName = useBilling && invoice.billing_contact_person 
+        ? invoice.billing_contact_person : invoice.client_name || 'N/A';
+      const recipientAddress = useBilling && invoice.billing_address 
+        ? invoice.billing_address : invoice.client_address;
+      const recipientPostalCode = useBilling && invoice.billing_postal_code 
+        ? invoice.billing_postal_code : invoice.client_postal_code;
+      const recipientCity = useBilling && invoice.billing_city 
+        ? invoice.billing_city : invoice.client_city;
+      
+      doc.fontSize(11)
+         .fillColor('#000000')
+         .font('Helvetica-Bold')
+         .text(recipientName, 50, recipientY);
+      
+      let currentY = recipientY + 15;
+      if (recipientAddress) {
+        doc.fontSize(10).font('Helvetica').text(recipientAddress, 50, currentY);
+        currentY += 12;
+      }
+      if (recipientPostalCode && recipientCity) {
+        doc.text(`${recipientPostalCode} ${recipientCity}`, 50, currentY);
+        currentY += 12;
+      }
+
+      // ==================== STORNO TITLE ====================
+      const titleY = 240;
+      doc.fontSize(18)
+         .fillColor('#C53030') // Red color for Storno
+         .font('Helvetica-Bold')
+         .text('STORNORECHNUNG / GUTSCHRIFT', 50, titleY);
+
+      doc.fontSize(10)
+         .fillColor('#000000')
+         .font('Helvetica')
+         .text(`Stornierung der Rechnung Nr. ${invoice.invoice_number} vom ${formatDate(invoice.issue_date)}`, 50, titleY + 30);
+
+      // ==================== GREETING TEXT ====================
+      let contentY = titleY + 60;
+      doc.fontSize(10)
+         .fillColor('#000000')
+         .font('Helvetica')
+         .text('Sehr geehrte Damen und Herren,', 50, contentY);
+      contentY += 20;
+      doc.text('hiermit stornieren wir die oben genannte Rechnung vollständig und erstatten Ihnen den folgenden Betrag:', 50, contentY, { width: 495 });
+      contentY += 35;
+
+      // ==================== LINE ITEMS TABLE (with negative amounts) ====================
+      const tableStartY = contentY;
+      const colPositions = { nr: 50, description: 90, quantity: 330, unitPrice: 410, total: 480 };
+
+      // Table header
+      doc.rect(45, tableStartY - 5, 505, 20).fillAndStroke('#F0F0F0', '#CCCCCC');
+
+      doc.fontSize(8)
+         .fillColor('#000000')
+         .font('Helvetica-Bold')
+         .text('Pos.', colPositions.nr, tableStartY)
+         .text('Beschreibung', colPositions.description, tableStartY)
+         .text('Menge', colPositions.quantity, tableStartY, { width: 70, align: 'right' })
+         .text('Einzelpreis', colPositions.unitPrice, tableStartY, { width: 65, align: 'right' })
+         .text('Gesamt', colPositions.total, tableStartY, { width: 65, align: 'right' });
+
+      // Table rows (negative amounts)
+      let rowY = tableStartY + 25;
+      doc.font('Helvetica').fontSize(9);
+
+      lineItems.forEach((item: any, index: number) => {
+        const negativeTotal = -parseFloat(item.line_total);
+        
+        doc.fillColor('#000000')
+           .text((index + 1).toString(), colPositions.nr, rowY)
+           .text(item.description || 'Leistung', colPositions.description, rowY, { width: 230 })
+           .text(parseFloat(item.quantity).toFixed(2), colPositions.quantity, rowY, { width: 70, align: 'right' })
+           .text(formatCurrency(-parseFloat(item.unit_price), invoice.currency), colPositions.unitPrice, rowY, { width: 65, align: 'right' })
+           .fillColor('#C53030') // Red for negative
+           .text(formatCurrency(negativeTotal, invoice.currency), colPositions.total, rowY, { width: 65, align: 'right' });
+        
+        rowY += 20;
+      });
+
+      // Separator line
+      doc.moveTo(45, rowY + 5).lineTo(550, rowY + 5).stroke('#CCCCCC');
+
+      // ==================== TOTALS (negative) ====================
+      const totalsY = rowY + 20;
+      const negativeSubTotal = -parseFloat(invoice.sub_total || '0');
+      const negativeTaxAmount = -parseFloat(invoice.tax_amount || '0');
+      const negativeTotal = -parseFloat(invoice.total_amount || '0');
+
+      doc.fontSize(9).font('Helvetica').fillColor('#000000')
+         .text('Zwischensumme:', 380, totalsY)
+         .fillColor('#C53030')
+         .text(formatCurrency(negativeSubTotal, invoice.currency), 480, totalsY, { width: 65, align: 'right' });
+
+      if (invoice.tax_rate > 0) {
+        doc.fillColor('#000000')
+           .text(`MwSt. (${invoice.tax_rate}%):`, 380, totalsY + 15)
+           .fillColor('#C53030')
+           .text(formatCurrency(negativeTaxAmount, invoice.currency), 480, totalsY + 15, { width: 65, align: 'right' });
+      }
+
+      doc.fontSize(11).font('Helvetica-Bold').fillColor('#000000')
+         .text('Gutschriftbetrag:', 380, totalsY + 35)
+         .fillColor('#C53030')
+         .text(formatCurrency(negativeTotal, invoice.currency), 480, totalsY + 35, { width: 65, align: 'right' });
+
+      // ==================== FOOTER TEXT ====================
+      const footerTextY = totalsY + 70;
+      doc.fontSize(10).font('Helvetica').fillColor('#000000')
+         .text('Der Gutschriftbetrag wird Ihnen entsprechend erstattet bzw. mit offenen Forderungen verrechnet.', 50, footerTextY, { width: 495 });
+
+      doc.fontSize(10)
+         .text('Mit freundlichen Grüßen', 50, footerTextY + 40);
+
+      if (settings.company_name) {
+        doc.text(settings.company_name, 50, footerTextY + 55);
+      }
+
+      // ==================== FINALIZE ====================
+      doc.end();
+
+      bufferStream.on('finish', async () => {
+        try {
+          const pdfBuffer = Buffer.concat(pdfBuffers);
+          res.setHeader('Content-Type', 'application/pdf');
+          res.setHeader('Content-Disposition', `attachment; filename=storno-${invoice.invoice_number}.pdf`);
+          res.send(pdfBuffer);
+        } catch (sendError: any) {
+          console.error('Storno PDF send error:', sendError);
+          if (!res.headersSent) {
+            res.status(500).json({ message: sendError.message || 'Failed to send Storno PDF' });
+          }
+        }
+      });
+
+    } catch (err: any) {
+      console.error('Generate Storno PDF error:', err);
+      if (!res.headersSent) {
+        res.status(500).json({ message: err.message || 'Failed to generate Storno PDF' });
+      }
+    }
+  }
+
+  /**
+   * Generates a Correction Invoice (Rechnungskorrektur) PDF for an invoice.
+   * Creates a document that references the original invoice for corrections.
+   * 
+   * @async
+   * @param {Request} req - Express request object with invoice ID in params
+   * @param {Response} res - Express response object
+   * @returns {Promise<void>} Sends PDF file as download or error response
+   * 
+   * @example
+   * GET /api/invoices/:id/correction-pdf
+   * Response: 200 (PDF file download)
+   */
+  async generateCorrectionPDF(req: Request, res: Response) {
+    const { id } = req.params;
+    const userId = (req as any).user?.id;
+
+    try {
+      // Helper function to format currency in German style
+      const formatCurrency = (amount: number, currency: string = 'EUR'): string => {
+        return new Intl.NumberFormat('de-DE', {
+          style: 'currency',
+          currency: currency,
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2
+        }).format(amount);
+      };
+
+      // Helper function to format dates in German style
+      const formatDate = (dateString: string): string => {
+        const date = new Date(dateString);
+        return date.toLocaleDateString('de-DE', {
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric'
+        });
+      };
+
+      // Fetch user settings for company information
+      const settingsResult = await this.db.query(
+        'SELECT * FROM settings WHERE user_id = $1',
+        [userId]
+      );
+      const settings = settingsResult.rows[0] || {};
+
+      // Fetch invoice with all details
+      const queryText = `
+        SELECT i.*, 
+               c.name as client_name, c.email as client_email, c.phone as client_phone,
+               c.address as client_address, c.city as client_city, c.postal_code as client_postal_code,
+               c.use_separate_billing_address, c.billing_contact_person, c.billing_email, c.billing_phone,
+               c.billing_address, c.billing_city, c.billing_state, c.billing_postal_code, c.billing_country,
+               p.name as project_name
+        FROM invoices i
+        LEFT JOIN clients c ON i.client_id = c.id
+        LEFT JOIN projects p ON i.project_id = p.id
+        WHERE i.id = $1 AND i.user_id = $2
+      `;
+      
+      const invoiceResult = await this.db.query(queryText, [id, userId]);
+      
+      if (invoiceResult.rows.length === 0) {
+        res.status(404).json({ message: 'Invoice not found' });
+        return;
+      }
+
+      const invoice = invoiceResult.rows[0];
+
+      // Fetch line items
+      const itemsQuery = `
+        SELECT 
+          COALESCE(p.name, ii.description) as description,
+          SUM(ii.quantity) as quantity,
+          ii.unit_price,
+          SUM(ii.quantity * ii.unit_price) as line_total,
+          COALESCE(ii.rate_type, 'hourly') as rate_type
+        FROM invoice_items ii
+        LEFT JOIN time_entries te ON ii.time_entry_id = te.id
+        LEFT JOIN projects p ON te.project_id = p.id
+        WHERE ii.invoice_id = $1
+        GROUP BY COALESCE(p.name, ii.description), ii.unit_price, ii.rate_type
+        ORDER BY MIN(ii.created_at)
+      `;
+      const itemsResult = await this.db.query(itemsQuery, [id]);
+      const lineItems = itemsResult.rows;
+
+      // Create PDF document
+      const doc = new PDFDocument({ 
+        margin: 50, 
+        size: 'A4',
+        bufferPages: true
+      });
+
+      let pdfBuffers: Buffer[] = [];
+      const bufferStream = new (require('stream').PassThrough)();
+      bufferStream.on('data', (chunk: Buffer) => pdfBuffers.push(chunk));
+      
+      doc.on('error', (docError: any) => {
+        console.error('PDFDocument error:', docError);
+        bufferStream.destroy(docError);
+      });
+      
+      doc.pipe(bufferStream);
+
+      // ==================== HEADER SECTION ====================
+      // Right side - Company Info
+      const safeCompanyName = (settings.company_name || 'Company Name').toString().substring(0, 100);
+      doc.fontSize(16)
+         .fillColor('#6B8EAF')
+         .font('Helvetica-Bold')
+         .text(safeCompanyName, 350, 50, { align: 'right', width: 195, lineBreak: false });
+      
+      if (settings.company_subline) {
+        doc.fontSize(10)
+           .fillColor('#666666')
+           .font('Helvetica')
+           .text(settings.company_subline.toString().substring(0, 100), 350, 72, { align: 'right', width: 195, lineBreak: false });
+      }
+
+      // Contact details (right side)
+      const contactY = settings.company_subline ? 100 : 80;
+      doc.fontSize(8).fillColor('#333333');
+      
+      if (settings.company_phone) {
+        doc.text(`Tel.: ${settings.company_phone}`, 350, contactY, { align: 'right', width: 195, lineBreak: false });
+      }
+      if (settings.company_email) {
+        doc.text(`E-Mail: ${settings.company_email}`, 350, contactY + 12, { align: 'right', width: 195, lineBreak: false });
+      }
+      if (settings.company_tax_id) {
+        doc.text(`USt-IdNr.: ${settings.company_tax_id}`, 350, contactY + 24, { align: 'right', width: 195, lineBreak: false });
+      }
+
+      // Correction date and reference (right side)
+      const datesY = contactY + 48;
+      const correctionDate = new Date().toLocaleDateString('de-DE', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric'
+      });
+      
+      doc.fontSize(8)
+         .fillColor('#333333')
+         .font('Helvetica-Bold')
+         .text('Korrekturdatum: ', 350, datesY, { continued: true })
+         .font('Helvetica')
+         .text(correctionDate, { align: 'right', width: 195, lineBreak: false });
+      
+      doc.font('Helvetica-Bold')
+         .text('Bezug auf Rechnung: ', 350, datesY + 12, { continued: true })
+         .font('Helvetica')
+         .text(invoice.invoice_number, { align: 'right', width: 195, lineBreak: false });
+      
+      doc.font('Helvetica-Bold')
+         .text('Rechnungsdatum: ', 350, datesY + 24, { continued: true })
+         .font('Helvetica')
+         .text(formatDate(invoice.issue_date), { align: 'right', width: 195, lineBreak: false });
+
+      // ==================== LEFT SIDE - SENDER & RECIPIENT ====================
+      const senderAddress = settings.company_address || 'Company Address';
+      doc.fontSize(7)
+         .fillColor('#999999')
+         .font('Helvetica')
+         .text(`${settings.company_name || 'Company'}, ${senderAddress}`, 50, 50);
+
+      // Recipient address
+      const recipientY = 75;
+      const useBilling = invoice.use_separate_billing_address;
+      const recipientName = useBilling && invoice.billing_contact_person 
+        ? invoice.billing_contact_person : invoice.client_name || 'N/A';
+      const recipientAddress = useBilling && invoice.billing_address 
+        ? invoice.billing_address : invoice.client_address;
+      const recipientPostalCode = useBilling && invoice.billing_postal_code 
+        ? invoice.billing_postal_code : invoice.client_postal_code;
+      const recipientCity = useBilling && invoice.billing_city 
+        ? invoice.billing_city : invoice.client_city;
+      
+      doc.fontSize(11)
+         .fillColor('#000000')
+         .font('Helvetica-Bold')
+         .text(recipientName, 50, recipientY);
+      
+      let currentY = recipientY + 15;
+      if (recipientAddress) {
+        doc.fontSize(10).font('Helvetica').text(recipientAddress, 50, currentY);
+        currentY += 12;
+      }
+      if (recipientPostalCode && recipientCity) {
+        doc.text(`${recipientPostalCode} ${recipientCity}`, 50, currentY);
+        currentY += 12;
+      }
+
+      // ==================== CORRECTION TITLE ====================
+      const titleY = 240;
+      doc.fontSize(18)
+         .fillColor('#D97706') // Orange/amber color for Correction
+         .font('Helvetica-Bold')
+         .text('RECHNUNGSKORREKTUR', 50, titleY);
+
+      doc.fontSize(10)
+         .fillColor('#000000')
+         .font('Helvetica')
+         .text(`Korrektur zur Rechnung Nr. ${invoice.invoice_number} vom ${formatDate(invoice.issue_date)}`, 50, titleY + 30);
+
+      // ==================== GREETING TEXT ====================
+      let contentY = titleY + 60;
+      doc.fontSize(10)
+         .fillColor('#000000')
+         .font('Helvetica')
+         .text('Sehr geehrte Damen und Herren,', 50, contentY);
+      contentY += 20;
+      doc.text('hiermit korrigieren wir die oben genannte Rechnung wie folgt:', 50, contentY, { width: 495 });
+      contentY += 35;
+
+      // ==================== ORIGINAL INVOICE REFERENCE ====================
+      doc.fontSize(10).font('Helvetica-Bold').fillColor('#333333')
+         .text('Ursprüngliche Rechnung:', 50, contentY);
+      contentY += 18;
+
+      doc.fontSize(9).font('Helvetica').fillColor('#000000')
+         .text(`Rechnungsnummer: ${invoice.invoice_number}`, 60, contentY);
+      contentY += 14;
+      doc.text(`Rechnungsdatum: ${formatDate(invoice.issue_date)}`, 60, contentY);
+      contentY += 14;
+      doc.text(`Fälligkeitsdatum: ${formatDate(invoice.due_date)}`, 60, contentY);
+      contentY += 14;
+      doc.text(`Rechnungsbetrag: ${formatCurrency(parseFloat(invoice.total_amount), invoice.currency)}`, 60, contentY);
+      contentY += 30;
+
+      // ==================== CORRECTION DETAILS SECTION ====================
+      doc.fontSize(10).font('Helvetica-Bold').fillColor('#333333')
+         .text('Korrektur:', 50, contentY);
+      contentY += 18;
+
+      // Use the correction_reason from database or fallback message
+      const correctionReason = invoice.correction_reason || 'Korrektur der Rechnung';
+      doc.fontSize(9).font('Helvetica').fillColor('#000000')
+         .text(correctionReason, 60, contentY, { width: 480 });
+      contentY += 30;
+
+      // Parse original data if available
+      let originalData: any = null;
+      if (invoice.original_data) {
+        try {
+          originalData = typeof invoice.original_data === 'string' 
+            ? JSON.parse(invoice.original_data) 
+            : invoice.original_data;
+        } catch (e) {
+          console.error('Failed to parse original_data:', e);
+        }
+      }
+
+      // ==================== SHOW FIELD-BY-FIELD CHANGES ====================
+      if (originalData) {
+        const changes: { field: string; oldValue: string; newValue: string }[] = [];
+        
+        // Check for due_date change
+        if (originalData.due_date && originalData.due_date !== invoice.due_date) {
+          changes.push({
+            field: 'Fälligkeitsdatum',
+            oldValue: formatDate(originalData.due_date),
+            newValue: formatDate(invoice.due_date)
+          });
+        }
+        
+        // Check for issue_date change
+        if (originalData.issue_date && originalData.issue_date !== invoice.issue_date) {
+          changes.push({
+            field: 'Rechnungsdatum',
+            oldValue: formatDate(originalData.issue_date),
+            newValue: formatDate(invoice.issue_date)
+          });
+        }
+        
+        // Check for total_amount change
+        if (originalData.total_amount && parseFloat(originalData.total_amount) !== parseFloat(invoice.total_amount)) {
+          changes.push({
+            field: 'Rechnungsbetrag',
+            oldValue: formatCurrency(parseFloat(originalData.total_amount), invoice.currency),
+            newValue: formatCurrency(parseFloat(invoice.total_amount), invoice.currency)
+          });
+        }
+        
+        // Check for notes/description change
+        if (originalData.notes !== undefined && originalData.notes !== invoice.notes) {
+          changes.push({
+            field: 'Anmerkungen',
+            oldValue: originalData.notes || '(keine)',
+            newValue: invoice.notes || '(keine)'
+          });
+        }
+
+        // Display field changes if any
+        if (changes.length > 0) {
+          doc.fontSize(10).font('Helvetica-Bold').fillColor('#333333')
+             .text('Geänderte Felder:', 50, contentY);
+          contentY += 18;
+
+          // Changes table header
+          doc.rect(45, contentY - 5, 505, 20).fillAndStroke('#FFF3E0', '#FF9800');
+          doc.fontSize(8)
+             .fillColor('#000000')
+             .font('Helvetica-Bold')
+             .text('Feld', 55, contentY)
+             .text('Ursprünglicher Wert', 180, contentY, { width: 150 })
+             .text('Neuer Wert', 380, contentY, { width: 150 });
+          
+          contentY += 22;
+
+          changes.forEach((change) => {
+            doc.fontSize(9).font('Helvetica')
+               .fillColor('#333333')
+               .text(change.field, 55, contentY)
+               .fillColor('#999999')
+               .text(change.oldValue, 180, contentY, { width: 150 })
+               .fillColor('#2E7D32')
+               .text(change.newValue, 380, contentY, { width: 150 });
+            contentY += 18;
+          });
+
+          contentY += 15;
+        }
+      }
+
+      // ==================== CHECK IF LINE ITEMS CHANGED ====================
+      let itemsChanged = false;
+      if (originalData && originalData.items && lineItems) {
+        // Check if number of items changed
+        if (originalData.items.length !== lineItems.length) {
+          itemsChanged = true;
+        } else {
+          // Check if any item details changed
+          for (let i = 0; i < lineItems.length; i++) {
+            const origItem = originalData.items[i];
+            const currItem = lineItems[i];
+            if (
+              parseFloat(origItem.quantity) !== parseFloat(currItem.quantity) ||
+              parseFloat(origItem.unit_price) !== parseFloat(currItem.unit_price) ||
+              origItem.description !== currItem.description
+            ) {
+              itemsChanged = true;
+              break;
+            }
+          }
+        }
+      }
+
+      let totalsY = contentY;
+      const colPositions = { nr: 50, description: 90, quantity: 330, unitPrice: 410, total: 480 };
+
+      // Only show position tables if items actually changed
+      if (itemsChanged) {
+        // ==================== CORRECTED LINE ITEMS (CURRENT) ====================
+        doc.fontSize(10).font('Helvetica-Bold').fillColor('#333333')
+           .text('Korrigierte Positionen:', 50, contentY);
+        contentY += 18;
+
+        const tableStartY = contentY;
+
+        // Table header
+        doc.rect(45, tableStartY - 5, 505, 20).fillAndStroke('#E8F5E9', '#4CAF50');
+
+        doc.fontSize(8)
+           .fillColor('#000000')
+           .font('Helvetica-Bold')
+           .text('Pos.', colPositions.nr, tableStartY)
+           .text('Beschreibung', colPositions.description, tableStartY)
+           .text('Menge', colPositions.quantity, tableStartY, { width: 70, align: 'right' })
+           .text('Einzelpreis', colPositions.unitPrice, tableStartY, { width: 65, align: 'right' })
+           .text('Gesamt', colPositions.total, tableStartY, { width: 65, align: 'right' });
+
+        // Table rows - CURRENT/CORRECTED items
+        let rowY = tableStartY + 25;
+        doc.font('Helvetica').fontSize(9);
+
+        lineItems.forEach((item: any, index: number) => {
+          doc.fillColor('#2E7D32') // Green for corrected values
+             .text((index + 1).toString(), colPositions.nr, rowY)
+             .text(item.description || 'Leistung', colPositions.description, rowY, { width: 230 })
+             .text(parseFloat(item.quantity).toFixed(2), colPositions.quantity, rowY, { width: 70, align: 'right' })
+             .text(formatCurrency(parseFloat(item.unit_price), invoice.currency), colPositions.unitPrice, rowY, { width: 65, align: 'right' })
+             .text(formatCurrency(parseFloat(item.line_total), invoice.currency), colPositions.total, rowY, { width: 65, align: 'right' });
+          
+          rowY += 20;
+        });
+
+        // Separator line
+        doc.moveTo(45, rowY + 5).lineTo(550, rowY + 5).stroke('#4CAF50');
+
+        // Corrected totals
+        totalsY = rowY + 15;
+        doc.fontSize(9).font('Helvetica-Bold').fillColor('#2E7D32')
+           .text('Korrigierter Betrag:', 380, totalsY)
+           .text(formatCurrency(parseFloat(invoice.total_amount), invoice.currency), 480, totalsY, { width: 65, align: 'right' });
+      }
+
+      totalsY += 30;
+
+      // ==================== ORIGINAL LINE ITEMS REFERENCE (only if items changed) ====================
+      if (itemsChanged && originalData && originalData.items && originalData.items.length > 0) {
+        doc.fontSize(10).font('Helvetica-Bold').fillColor('#666666')
+           .text('Ursprüngliche Positionen (zum Vergleich):', 50, totalsY);
+        totalsY += 18;
+
+        const origTableStartY = totalsY;
+
+        // Table header for original
+        doc.rect(45, origTableStartY - 5, 505, 20).fillAndStroke('#F5F5F5', '#CCCCCC');
+
+        doc.fontSize(8)
+           .fillColor('#666666')
+           .font('Helvetica-Bold')
+           .text('Pos.', colPositions.nr, origTableStartY)
+           .text('Beschreibung', colPositions.description, origTableStartY)
+           .text('Menge', colPositions.quantity, origTableStartY, { width: 70, align: 'right' })
+           .text('Einzelpreis', colPositions.unitPrice, origTableStartY, { width: 65, align: 'right' })
+           .text('Gesamt', colPositions.total, origTableStartY, { width: 65, align: 'right' });
+
+        // Original items
+        let origRowY = origTableStartY + 25;
+        doc.font('Helvetica').fontSize(9);
+
+        originalData.items.forEach((item: any, index: number) => {
+          const itemTotal = parseFloat(item.quantity) * parseFloat(item.unit_price);
+          doc.fillColor('#999999')
+             .text((index + 1).toString(), colPositions.nr, origRowY)
+             .text(item.description || 'Leistung', colPositions.description, origRowY, { width: 230 })
+             .text(parseFloat(item.quantity).toFixed(2), colPositions.quantity, origRowY, { width: 70, align: 'right' })
+             .text(formatCurrency(parseFloat(item.unit_price), invoice.currency), colPositions.unitPrice, origRowY, { width: 65, align: 'right' })
+             .text(formatCurrency(itemTotal, invoice.currency), colPositions.total, origRowY, { width: 65, align: 'right' });
+          
+          origRowY += 20;
+        });
+
+        // Separator line
+        doc.moveTo(45, origRowY + 5).lineTo(550, origRowY + 5).stroke('#CCCCCC');
+
+        // Original totals
+        totalsY = origRowY + 15;
+        doc.fontSize(9).font('Helvetica').fillColor('#999999')
+           .text('Ursprünglicher Betrag:', 380, totalsY)
+           .text(formatCurrency(parseFloat(originalData.total_amount), invoice.currency), 480, totalsY, { width: 65, align: 'right' });
+
+        // Difference
+        const difference = parseFloat(invoice.total_amount) - parseFloat(originalData.total_amount);
+        if (difference !== 0) {
+          totalsY += 15;
+          const diffColor = difference > 0 ? '#D32F2F' : '#2E7D32';
+          const diffSign = difference > 0 ? '+' : '';
+          doc.fontSize(9).font('Helvetica-Bold').fillColor(diffColor)
+             .text('Differenz:', 380, totalsY)
+             .text(diffSign + formatCurrency(difference, invoice.currency), 480, totalsY, { width: 65, align: 'right' });
+        }
+
+        totalsY += 30;
+      }
+
+      // ==================== FOOTER TEXT ====================
+      const footerTextY = totalsY + 20;
+      doc.fontSize(10).font('Helvetica').fillColor('#000000')
+         .text('Diese Rechnungskorrektur ist zusammen mit der Originalrechnung aufzubewahren.', 50, footerTextY, { width: 495 });
+
+      doc.fontSize(10)
+         .text('Mit freundlichen Grüßen', 50, footerTextY + 40);
+
+      if (settings.company_name) {
+        doc.text(settings.company_name, 50, footerTextY + 55);
+      }
+
+      // ==================== FINALIZE ====================
+      doc.end();
+
+      bufferStream.on('finish', async () => {
+        try {
+          const pdfBuffer = Buffer.concat(pdfBuffers);
+          res.setHeader('Content-Type', 'application/pdf');
+          res.setHeader('Content-Disposition', `attachment; filename=korrektur-${invoice.invoice_number}.pdf`);
+          res.send(pdfBuffer);
+        } catch (sendError: any) {
+          console.error('Correction PDF send error:', sendError);
+          if (!res.headersSent) {
+            res.status(500).json({ message: sendError.message || 'Failed to send Correction PDF' });
+          }
+        }
+      });
+
+    } catch (err: any) {
+      console.error('Generate Correction PDF error:', err);
+      if (!res.headersSent) {
+        res.status(500).json({ message: err.message || 'Failed to generate Correction PDF' });
+      }
     }
   }
 }

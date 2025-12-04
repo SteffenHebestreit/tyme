@@ -10,6 +10,7 @@ import {
   addInvoiceLineItems,
   cancelInvoice,
   createInvoice,
+  createInvoiceCorrection,
   deleteInvoice,
   fetchBillingHistory,
   fetchInvoice,
@@ -161,6 +162,43 @@ export function useCancelInvoice() {
     onSuccess: (_invoice: Invoice, id: string) => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.invoices.all });
       void queryClient.invalidateQueries({ queryKey: queryKeys.invoices.detail(id) });
+    },
+  });
+}
+
+/**
+ * Hook for creating a correction for an existing invoice.
+ * Stores original invoice data and applies corrections.
+ * Only works for non-draft, non-cancelled invoices.
+ * Automatically invalidates the invoices list and detail caches on success.
+ * 
+ * @returns {UseMutationResult} React Query mutation result
+ * 
+ * @example
+ * const correctionMutation = useCreateInvoiceCorrection();
+ * 
+ * const handleCorrection = (id: string, data: { correction_reason: string, items: [] }) => {
+ *   correctionMutation.mutate({ id, ...data });
+ * };
+ */
+export function useCreateInvoiceCorrection() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...data }: { 
+      id: string; 
+      correction_reason?: string; 
+      items?: Array<{ description: string; quantity: number; unit_price: number }>;
+      due_date?: string;
+      issue_date?: string;
+      delivery_date?: string;
+      notes?: string;
+      invoice_headline?: string;
+      invoice_text?: string;
+      footer_text?: string;
+    }) => createInvoiceCorrection(id, data),
+    onSuccess: (_invoice: Invoice, variables) => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.invoices.all });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.invoices.detail(variables.id) });
     },
   });
 }

@@ -4,6 +4,10 @@
   "noAuth": "Please log in to manage invoices.",
   "create": "Create invoice",
   "edit": "Edit Invoice",
+  "correct": "Correct",
+  "correction": "Invoice Correction",
+  "correctionReason": "Correction Reason",
+  "correctionReasonPlaceholder": "Enter the reason for this correction...",
   "delete": "Delete Invoice",
   "view": "View Invoice",
   "send": "Send Invoice",
@@ -53,6 +57,8 @@
     "title": "Invoice details",
     "recordPayment": "Record Payment",
     "downloadPDF": "View PDF",
+    "downloadStorno": "Storno PDF",
+    "downloadCorrection": "Correction PDF",
     "downloading": "Opening...",
     "cancelInvoice": "Cancel Invoice",
     "enableZugferd": "Generate as ZUGFeRD e-invoice (EN 16931 standard)",
@@ -188,7 +194,8 @@
     },
     "submit": {
       "create": "Create invoice",
-      "edit": "Save changes"
+      "edit": "Save changes",
+      "correct": "Save Correction"
     },
     "noClients": "Add a client before creating an invoice.",
     "client": {
@@ -308,6 +315,7 @@
   "messages": {
     "createSuccess": "Invoice created successfully.",
     "updateSuccess": "Invoice updated successfully.",
+    "correctionSuccess": "Invoice correction saved successfully.",
     "deleteSuccess": "Invoice deleted successfully.",
     "generateSuccess": "Invoice generated from time entries.",
     "sendSuccess": "Invoice sent successfully",

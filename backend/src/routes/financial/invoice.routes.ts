@@ -468,6 +468,69 @@ router.patch('/:id/cancel', invoiceController.cancel.bind(invoiceController));
 
 /**
  * @openapi
+ * /api/invoices/{id}/correct:
+ *   post:
+ *     tags:
+ *       - Invoices
+ *     summary: Create a correction for an invoice
+ *     description: Creates a correction for an existing invoice. Stores the original data for generating correction PDFs. Only works for non-draft, non-cancelled invoices.
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Invoice ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               correction_reason:
+ *                 type: string
+ *                 description: Reason for the correction
+ *               items:
+ *                 type: array
+ *                 items:
+ *                   type: object
+ *                   properties:
+ *                     description:
+ *                       type: string
+ *                     quantity:
+ *                       type: number
+ *                     unit_price:
+ *                       type: number
+ *     responses:
+ *       200:
+ *         description: Invoice correction created successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                   example: Invoice correction created successfully
+ *                 invoice:
+ *                   $ref: '#/components/schemas/Invoice'
+ *       400:
+ *         description: Cannot create correction (draft or cancelled invoice)
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
+ *       404:
+ *         $ref: '#/components/responses/NotFound'
+ *       500:
+ *         $ref: '#/components/responses/ServerError'
+ */
+router.post('/:id/correct', invoiceController.createCorrection.bind(invoiceController));
+
+/**
+ * @openapi
  * /api/invoices/{id}:
  *   delete:
  *     tags:
@@ -831,5 +894,75 @@ router.get('/:id/payments', (req: any, res: any) => {
  *         $ref: '#/components/responses/ServerError'
  */
 router.get('/:id/pdf', invoiceController.generatePDF.bind(invoiceController));
+
+/**
+ * @openapi
+ * /api/invoices/{id}/storno-pdf:
+ *   get:
+ *     tags:
+ *       - Invoices
+ *     summary: Generate and download Storno (cancellation) PDF
+ *     description: Generates a Storno/Credit Note PDF document for the specified invoice. This creates a document that cancels the original invoice with negative amounts.
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Invoice ID
+ *     responses:
+ *       200:
+ *         description: Storno PDF generated successfully
+ *         content:
+ *           application/pdf:
+ *             schema:
+ *               type: string
+ *               format: binary
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
+ *       404:
+ *         $ref: '#/components/responses/NotFound'
+ *       500:
+ *         $ref: '#/components/responses/ServerError'
+ */
+router.get('/:id/storno-pdf', invoiceController.generateStornoPDF.bind(invoiceController));
+
+/**
+ * @openapi
+ * /api/invoices/{id}/correction-pdf:
+ *   get:
+ *     tags:
+ *       - Invoices
+ *     summary: Generate and download Correction Invoice PDF
+ *     description: Generates a Correction Invoice (Rechnungskorrektur) PDF document that references the original invoice.
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Invoice ID
+ *     responses:
+ *       200:
+ *         description: Correction PDF generated successfully
+ *         content:
+ *           application/pdf:
+ *             schema:
+ *               type: string
+ *               format: binary
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
+ *       404:
+ *         $ref: '#/components/responses/NotFound'
+ *       500:
+ *         $ref: '#/components/responses/ServerError'
+ */
+router.get('/:id/correction-pdf', invoiceController.generateCorrectionPDF.bind(invoiceController));
 
 export default router;

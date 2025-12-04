@@ -123,6 +123,44 @@ export async function cancelInvoice(id: string): Promise<Invoice> {
 }
 
 /**
+ * Creates a correction for an existing invoice.
+ * Stores the original invoice data for generating correction PDFs.
+ * Only works for non-draft, non-cancelled invoices.
+ * 
+ * @async
+ * @param {string} id - UUID of the invoice to correct
+ * @param {object} correctionData - Correction data including reason and updated items
+ * @returns {Promise<Invoice>} The corrected invoice
+ * @throws {Error} If invoice not found, is draft/cancelled, or request fails
+ * 
+ * @example
+ * const corrected = await createInvoiceCorrection('invoice-uuid', {
+ *   correction_reason: 'Price adjustment',
+ *   items: [{ description: 'Updated work', quantity: 5, unit_price: 150 }]
+ * });
+ */
+export async function createInvoiceCorrection(
+  id: string, 
+  correctionData: { 
+    correction_reason?: string; 
+    items?: Array<{ description: string; quantity: number; unit_price: number }>;
+    due_date?: string;
+    issue_date?: string;
+    delivery_date?: string;
+    notes?: string;
+    invoice_headline?: string;
+    invoice_text?: string;
+    footer_text?: string;
+  }
+): Promise<Invoice> {
+  const { data } = await apiClient.post<{ message: string; invoice: Invoice }>(
+    `/invoices/${id}/correct`,
+    correctionData
+  );
+  return data.invoice;
+}
+
+/**
  * Deletes an invoice.
  * May fail if invoice has line items (foreign key constraint).
  * This action cannot be undone.
@@ -384,5 +422,51 @@ export async function downloadInvoicePDF(id: string, enableZugferd?: boolean): P
   window.open(url, '_blank');
   
   // Clean up the URL after a delay to allow the browser to load it
+  setTimeout(() => window.URL.revokeObjectURL(url), 100);
+}
+
+/**
+ * Opens Storno (cancellation/credit note) PDF in a new browser tab.
+ * Generates a document that cancels the original invoice with negative amounts.
+ * 
+ * @async
+ * @param {string} id - UUID of the invoice to cancel
+ * @returns {Promise<void>} Resolves when PDF is opened
+ * @throws {Error} If the PDF generation fails or invoice not found
+ * 
+ * @example
+ * await downloadStornoPDF('123e4567-e89b-12d3-a456-426614174000');
+ */
+export async function downloadStornoPDF(id: string): Promise<void> {
+  const response = await apiClient.get(`/invoices/${id}/storno-pdf`, {
+    responseType: 'blob',
+  });
+
+  const blob = new Blob([response.data], { type: 'application/pdf' });
+  const url = window.URL.createObjectURL(blob);
+  window.open(url, '_blank');
+  setTimeout(() => window.URL.revokeObjectURL(url), 100);
+}
+
+/**
+ * Opens Correction Invoice (Rechnungskorrektur) PDF in a new browser tab.
+ * Generates a document that references the original invoice for corrections.
+ * 
+ * @async
+ * @param {string} id - UUID of the invoice to create correction for
+ * @returns {Promise<void>} Resolves when PDF is opened
+ * @throws {Error} If the PDF generation fails or invoice not found
+ * 
+ * @example
+ * await downloadCorrectionPDF('123e4567-e89b-12d3-a456-426614174000');
+ */
+export async function downloadCorrectionPDF(id: string): Promise<void> {
+  const response = await apiClient.get(`/invoices/${id}/correction-pdf`, {
+    responseType: 'blob',
+  });
+
+  const blob = new Blob([response.data], { type: 'application/pdf' });
+  const url = window.URL.createObjectURL(blob);
+  window.open(url, '_blank');
   setTimeout(() => window.URL.revokeObjectURL(url), 100);
 }

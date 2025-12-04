@@ -4,6 +4,10 @@
   "noAuth": "Bitte melden Sie sich an, um Rechnungen zu verwalten.",
   "create": "Rechnung erstellen",
   "edit": "Rechnung bearbeiten",
+  "correct": "Korrigieren",
+  "correction": "Rechnungskorrektur",
+  "correctionReason": "Korrekturgrund",
+  "correctionReasonPlaceholder": "Geben Sie den Grund für diese Korrektur ein...",
   "delete": "Rechnung löschen",
   "view": "Rechnung ansehen",
   "send": "Rechnung senden",
@@ -53,6 +57,8 @@
     "title": "Rechnungsdetails",
     "recordPayment": "Zahlung erfassen",
     "downloadPDF": "PDF anzeigen",
+    "downloadStorno": "Storno-PDF",
+    "downloadCorrection": "Korrektur-PDF",
     "downloading": "Wird geöffnet...",
     "cancelInvoice": "Rechnung stornieren",
     "enableZugferd": "Als ZUGFeRD E-Rechnung erstellen (EN 16931 Standard)",
@@ -209,7 +215,8 @@
     },
     "submit": {
       "create": "Rechnung erstellen",
-      "edit": "Änderungen speichern"
+      "edit": "Änderungen speichern",
+      "correct": "Korrektur speichern"
     },
     "noClients": "Fügen Sie einen Kunden hinzu, bevor Sie eine Rechnung erstellen.",
     "client": {
@@ -353,6 +360,7 @@
   "messages": {
     "createSuccess": "Rechnung erfolgreich erstellt.",
     "updateSuccess": "Rechnung erfolgreich aktualisiert.",
+    "correctionSuccess": "Rechnungskorrektur erfolgreich gespeichert.",
     "deleteSuccess": "Rechnung erfolgreich gelöscht.",
     "generateSuccess": "Rechnung aus Zeiteinträgen generiert.",
     "sendSuccess": "Rechnung erfolgreich gesendet",

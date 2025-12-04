@@ -145,6 +145,11 @@ export interface Invoice {
   enable_zugferd?: boolean;
   delivery_date?: string | null;
   exclude_from_tax?: boolean;
+  // Correction fields
+  original_data?: Record<string, unknown> | null;
+  correction_reason?: string | null;
+  correction_date?: string | null;
+  correction_of_invoice_id?: string | null;
   created_at: string;
   updated_at: string;
   client_name?: string;

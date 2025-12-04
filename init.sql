@@ -657,6 +657,10 @@ CREATE TABLE public.invoices (
     terms_template_id uuid,
     delivery_date character varying(20),
     exclude_from_tax boolean DEFAULT false NOT NULL,
+    correction_of_invoice_id uuid,
+    original_data jsonb,
+    correction_reason text,
+    correction_date timestamp with time zone,
     CONSTRAINT invoices_status_check CHECK (((status)::text = ANY ((ARRAY['draft'::character varying, 'sent'::character varying, 'partially_paid'::character varying, 'paid'::character varying, 'overdue'::character varying, 'cancelled'::character varying])::text[])))
 );
 
@@ -715,6 +719,34 @@ COMMENT ON COLUMN public.invoices.terms_template_id IS 'Reference to invoice_tex
 --
 
 COMMENT ON COLUMN public.invoices.exclude_from_tax IS 'Whether to exclude this invoice from tax declarations and reports (e.g., for non-taxable income)';
+
+
+--
+-- Name: COLUMN invoices.correction_of_invoice_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.invoices.correction_of_invoice_id IS 'Reference to the original invoice that this correction applies to';
+
+
+--
+-- Name: COLUMN invoices.original_data; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.invoices.original_data IS 'JSON snapshot of original invoice data before correction was applied';
+
+
+--
+-- Name: COLUMN invoices.correction_reason; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.invoices.correction_reason IS 'Reason or description for the invoice correction';
+
+
+--
+-- Name: COLUMN invoices.correction_date; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.invoices.correction_date IS 'Timestamp when the correction was made';
 
 
 --
@@ -1652,6 +1684,13 @@ CREATE INDEX idx_invoices_user_id ON public.invoices USING btree (user_id);
 
 
 --
+-- Name: idx_invoices_correction_of; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_invoices_correction_of ON public.invoices USING btree (correction_of_invoice_id) WHERE (correction_of_invoice_id IS NOT NULL);
+
+
+--
 -- Name: idx_payments_invoice_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1990,6 +2029,14 @@ ALTER TABLE ONLY public.invoices
 
 ALTER TABLE ONLY public.invoices
     ADD CONSTRAINT invoices_terms_template_fkey FOREIGN KEY (terms_template_id) REFERENCES public.invoice_text_templates(id) ON DELETE SET NULL;
+
+
+--
+-- Name: invoices invoices_correction_of_invoice_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invoices
+    ADD CONSTRAINT invoices_correction_of_invoice_fkey FOREIGN KEY (correction_of_invoice_id) REFERENCES public.invoices(id) ON DELETE SET NULL;
 
 
 --

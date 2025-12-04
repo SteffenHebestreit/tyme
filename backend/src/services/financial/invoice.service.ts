@@ -184,6 +184,7 @@ export class InvoiceService {
              i.total_amount, i.currency, i.notes,
              i.tax_rate_id, i.invoice_headline, i.header_template_id, i.footer_template_id, i.terms_template_id,
              i.invoice_text, i.footer_text, i.tax_exemption_text, i.enable_zugferd, i.delivery_date, i.exclude_from_tax,
+             i.correction_of_invoice_id, i.original_data, i.correction_reason, i.correction_date,
              i.created_at, i.updated_at,
              c.name as client_name,
              p.name as project_name
@@ -202,12 +203,24 @@ export class InvoiceService {
       ORDER BY payment_date DESC, created_at DESC
     `;
 
-    // Get line items for this invoice
+    // Get line items for this invoice - grouped by project name (or description) and unit_price
+    // This matches the PDF generation logic for consistency
     const itemsQuery = `
-      SELECT id, invoice_id, time_entry_id, description, quantity, unit_price, total_price, rate_type, created_at
-      FROM invoice_items
-      WHERE invoice_id = $1
-      ORDER BY created_at ASC
+      SELECT 
+        (array_agg(ii.id ORDER BY ii.created_at ASC))[1] as id,
+        ii.invoice_id,
+        COALESCE(p.name, ii.description) as description,
+        SUM(ii.quantity) as quantity,
+        ii.unit_price,
+        SUM(ii.total_price) as total_price,
+        COALESCE(ii.rate_type, 'hourly') as rate_type,
+        MIN(ii.created_at) as created_at
+      FROM invoice_items ii
+      LEFT JOIN time_entries te ON ii.time_entry_id = te.id
+      LEFT JOIN projects p ON te.project_id = p.id
+      WHERE ii.invoice_id = $1
+      GROUP BY ii.invoice_id, COALESCE(p.name, ii.description), ii.unit_price, ii.rate_type
+      ORDER BY MIN(ii.created_at) ASC
     `;
     
     try {
