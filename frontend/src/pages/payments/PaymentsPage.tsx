@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import { fetchPayments } from '@/api/services/payment.service';
 import { Payment } from '@/api/types';
 import { useApp } from '@/store/AppContext';
@@ -28,11 +29,13 @@ import { Table, Column } from '@/components/common/Table';
 interface PaymentsPageProps {
   startDate?: string;
   endDate?: string;
+  onNavigateToInvoice?: (invoiceId: string) => void;
 }
 
-export default function PaymentsPage({ startDate: propStartDate, endDate: propEndDate }: PaymentsPageProps = {}) {
+export default function PaymentsPage({ startDate: propStartDate, endDate: propEndDate, onNavigateToInvoice }: PaymentsPageProps = {}) {
   const { t } = useTranslation('payments');
   const { state } = useApp();
+  const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   const [paymentMethodFilter, setPaymentMethodFilter] = useState<string>('all');
   const [paymentTypeFilter, setPaymentTypeFilter] = useState<string>('all');
@@ -56,7 +59,9 @@ export default function PaymentsPage({ startDate: propStartDate, endDate: propEn
   const filteredPayments = paymentsOnly.filter((payment) => {
     const matchesSearch = 
       payment.transaction_id?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      payment.notes?.toLowerCase().includes(searchTerm.toLowerCase());
+      payment.notes?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      payment.invoice_number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      payment.client_name?.toLowerCase().includes(searchTerm.toLowerCase());
     
     const matchesMethod = 
       paymentMethodFilter === 'all' || 
@@ -470,6 +475,14 @@ export default function PaymentsPage({ startDate: propStartDate, endDate: propEn
         payment={selectedPayment}
         isOpen={!!selectedPayment}
         onClose={() => setSelectedPayment(null)}
+        onNavigateToInvoice={(invoiceId) => {
+          if (onNavigateToInvoice) {
+            onNavigateToInvoice(invoiceId);
+          } else {
+            // Fallback: navigate directly to finances with invoice search
+            navigate(`/finances?tab=invoices&search=${selectedPayment?.invoice_number || invoiceId}`);
+          }
+        }}
       />
 
       {/* Add Payment Modal */}

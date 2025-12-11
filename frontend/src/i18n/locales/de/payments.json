@@ -9,12 +9,13 @@
   "noPayments": "Keine Zahlungen gefunden",
   "noPaymentsMessage": "Zahlungen werden hier angezeigt, sobald sie erfasst sind",
   "tryAdjustingFilters": "Versuchen Sie, Ihre Filter anzupassen",
-  "searchPlaceholder": "Nach Transaktions-ID oder Notizen suchen...",
+  "searchPlaceholder": "Nach Transaktions-ID, Rechnungsnummer, Kunde oder Notizen suchen...",
   "fields": {
     "amount": "Betrag",
     "date": "Zahlungsdatum",
     "method": "Zahlungsmethode",
     "invoice": "Rechnung",
+    "linkedInvoice": "Verknüpfte Rechnung",
     "transactionId": "Transaktions-ID",
     "notes": "Notizen",
     "type": "Typ"

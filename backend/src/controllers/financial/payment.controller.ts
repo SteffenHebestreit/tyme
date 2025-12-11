@@ -252,9 +252,11 @@ export class PaymentController {
         const queryText = `
           SELECT p.id, p.user_id, p.client_id, p.invoice_id, p.project_id, p.amount, p.payment_type,
                  p.payment_method, p.transaction_id, p.payment_date, p.notes, p.exclude_from_tax, p.created_at,
-                 c.name as client_name
+                 c.name as client_name,
+                 i.invoice_number
           FROM payments p 
           LEFT JOIN clients c ON p.client_id = c.id AND c.user_id = $1
+          LEFT JOIN invoices i ON p.invoice_id = i.id AND i.user_id = $1
           WHERE p.user_id = $1 ORDER BY p.payment_date DESC, p.created_at DESC
         `;
         const result = await this.db.query(queryText, [(req as any).user?.id]);

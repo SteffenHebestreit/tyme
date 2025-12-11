@@ -11,9 +11,10 @@
  * @module pages/finances/FinancesPage
  */
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
+import { useSearchParams } from 'react-router-dom';
 import InvoiceList from '@/components/business/invoices/InvoiceList';
 import PaymentsPage from '@/pages/payments/PaymentsPage';
 import ExpensesPage from '@/pages/expenses/ExpensesPage';
@@ -44,7 +45,37 @@ type FinanceTab = 'invoices' | 'payments' | 'expenses' | 'tax-prepayments';
  */
 export default function FinancesPage() {
   const { t } = useTranslation('finances');
+  const [searchParams, setSearchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState<FinanceTab>('invoices');
+  const [invoiceSearchTerm, setInvoiceSearchTerm] = useState<string>('');
+  
+  // Handle URL params for tab switching and invoice search
+  useEffect(() => {
+    const tab = searchParams.get('tab') as FinanceTab | null;
+    const search = searchParams.get('search');
+    
+    if (tab && ['invoices', 'payments', 'expenses', 'tax-prepayments'].includes(tab)) {
+      setActiveTab(tab);
+    }
+    
+    if (search) {
+      setInvoiceSearchTerm(search);
+      // Clear the search param after capturing it
+      const newParams = new URLSearchParams(searchParams);
+      newParams.delete('search');
+      newParams.delete('tab');
+      setSearchParams(newParams, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
+
+  // Handler for navigating from payments to invoices
+  const handleNavigateToInvoice = (invoiceId: string) => {
+    // Find the invoice number for this invoice (we can search by ID or number)
+    const invoice = invoices.find(inv => inv.id === invoiceId);
+    const searchTerm = invoice?.invoice_number || invoiceId;
+    setInvoiceSearchTerm(searchTerm);
+    setActiveTab('invoices');
+  };
   
   // Initialize date filters: Start from one year ago to capture all data
   const oneYearAgo = new Date();
@@ -275,10 +306,10 @@ export default function FinancesPage() {
         {/* Tab Content */}
         <div className="relative">
           {activeTab === 'invoices' && (
-            <InvoiceList startDate={startDate} endDate={endDate} />
+            <InvoiceList startDate={startDate} endDate={endDate} initialSearchTerm={invoiceSearchTerm} />
           )}
           {activeTab === 'payments' && (
-            <PaymentsPage startDate={startDate} endDate={endDate} />
+            <PaymentsPage startDate={startDate} endDate={endDate} onNavigateToInvoice={handleNavigateToInvoice} />
           )}
           {activeTab === 'expenses' && (
             <ExpensesPage startDate={startDate} endDate={endDate} />

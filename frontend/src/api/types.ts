@@ -301,6 +301,7 @@ export interface Payment {
   client_id: string | null;
   client_name?: string | null; // Joined from clients table
   invoice_id: string | null;
+  invoice_number?: string | null; // Joined from invoices table
   project_id?: string | null;
   amount: number;
   payment_type: PaymentType;

@@ -9,12 +9,13 @@
   "noPayments": "No payments found",
   "noPaymentsMessage": "Payments will appear here once they are recorded",
   "tryAdjustingFilters": "Try adjusting your filters",
-  "searchPlaceholder": "Search by transaction ID or notes...",
+  "searchPlaceholder": "Search by transaction ID, invoice number, client or notes...",
   "fields": {
     "amount": "Amount",
     "date": "Payment Date",
     "method": "Payment Method",
     "invoice": "Invoice",
+    "linkedInvoice": "Linked Invoice",
     "transactionId": "Transaction ID",
     "notes": "Notes",
     "type": "Type"

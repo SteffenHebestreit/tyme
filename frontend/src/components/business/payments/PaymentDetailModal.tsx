@@ -4,14 +4,16 @@ import { formatCurrency } from '@/utils/currency';
 import { useTranslation } from 'react-i18next';
 import { useState, useEffect } from 'react';
 import { useUpdatePayment } from '@/hooks/api/usePayments';
+import { ExternalLink } from 'lucide-react';
 
 interface PaymentDetailModalProps {
   payment: Payment | null;
   isOpen: boolean;
   onClose: () => void;
+  onNavigateToInvoice?: (invoiceId: string) => void;
 }
 
-export function PaymentDetailModal({ payment, isOpen, onClose }: PaymentDetailModalProps) {
+export function PaymentDetailModal({ payment, isOpen, onClose, onNavigateToInvoice }: PaymentDetailModalProps) {
   const { t } = useTranslation('payments');
   const { t: tInvoices } = useTranslation('invoices');
   const [excludeFromTax, setExcludeFromTax] = useState(false);
@@ -159,11 +161,24 @@ export function PaymentDetailModal({ payment, isOpen, onClose }: PaymentDetailMo
         {payment.invoice_id && (
           <div>
             <label className="text-sm font-medium text-gray-500 dark:text-gray-400">
-              Linked Invoice
+              {t('fields.linkedInvoice')}
             </label>
-            <p className="mt-1 text-base text-gray-900 dark:text-white">
-              {payment.invoice_id}
-            </p>
+            {onNavigateToInvoice ? (
+              <button
+                onClick={() => {
+                  onClose();
+                  onNavigateToInvoice(payment.invoice_id!);
+                }}
+                className="mt-1 flex items-center gap-2 text-base text-purple-600 dark:text-purple-400 hover:text-purple-700 dark:hover:text-purple-300 hover:underline"
+              >
+                {payment.invoice_number || payment.invoice_id}
+                <ExternalLink className="h-4 w-4" />
+              </button>
+            ) : (
+              <p className="mt-1 text-base text-gray-900 dark:text-white">
+                {payment.invoice_number || payment.invoice_id}
+              </p>
+            )}
           </div>
         )}
 
