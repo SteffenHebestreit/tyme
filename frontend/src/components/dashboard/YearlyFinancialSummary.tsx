@@ -87,14 +87,14 @@ export const YearlyFinancialSummary: FC = () => {
   }> = [
     {
       label: t('yearlyFinancialSummary.totalRevenue'),
-      value: data.total_revenue,
+      value: data.gross_revenue_all,
       icon: DollarSign,
       accent: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-300',
       description: t('yearlyFinancialSummary.totalRevenueDesc'),
     },
     {
       label: t('yearlyFinancialSummary.totalExpenses'),
-      value: data.total_expenses,
+      value: data.gross_expenses_all,
       icon: Receipt,
       accent: 'bg-orange-500/10 text-orange-600 dark:text-orange-300',
       description: t('yearlyFinancialSummary.totalExpensesDesc'),
@@ -169,7 +169,10 @@ export const YearlyFinancialSummary: FC = () => {
 
       {/* Additional breakdown summary */}
       <div className="rounded-xl border border-gray-200 bg-gradient-to-br from-gray-50 to-white p-5 dark:border-gray-800 dark:from-gray-900 dark:to-gray-900">
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <h3 className="text-sm font-semibold uppercase tracking-wider text-gray-700 dark:text-gray-300 mb-4">
+          {t('yearlyFinancialSummary.taxBreakdownTitle')}
+        </h3>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
           <div>
             <p className="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
               {t('yearlyFinancialSummary.netRevenue')}
@@ -184,6 +187,19 @@ export const YearlyFinancialSummary: FC = () => {
             </p>
             <p className="mt-1 text-lg font-semibold text-gray-900 dark:text-white">
               {formatCurrency(data.net_expenses)}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+              {t('yearlyFinancialSummary.taxRelevantProfit')}
+            </p>
+            <p className={clsx(
+              'mt-1 text-lg font-semibold',
+              data.net_revenue - data.net_expenses >= 0
+                ? 'text-green-600 dark:text-green-400'
+                : 'text-red-600 dark:text-red-400'
+            )}>
+              {formatCurrency(data.net_revenue - data.net_expenses)}
             </p>
           </div>
           <div>

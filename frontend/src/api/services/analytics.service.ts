@@ -58,6 +58,8 @@ export interface ProjectProfitability {
  */
 export interface YearlyFinancialSummary {
   year: number;
+  gross_revenue_all: number;
+  gross_expenses_all: number;
   total_revenue: number;
   total_expenses: number;
   revenue_tax: number;

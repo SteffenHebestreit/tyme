@@ -324,6 +324,31 @@ export default function Header() {
                 )}
               </button>
             )}
+
+            {/* Login button - only show when not authenticated */}
+            {!isAuthenticated && (
+              <Link
+                to="/login"
+                className={`relative group p-2 rounded-lg transition-all ${
+                  state.theme === 'light'
+                    ? 'text-purple-600 hover:text-purple-800 hover:bg-purple-100'
+                    : 'text-purple-300 hover:text-purple-100 hover:bg-purple-500/10'
+                }`}
+                aria-label={t('buttons.login')}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9" />
+                </svg>
+                {/* Tooltip */}
+                <span className={`absolute right-0 top-full mt-2 px-2 py-1 text-xs font-medium rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none ${
+                  state.theme === 'light'
+                    ? 'bg-gray-800 text-white'
+                    : 'bg-gray-700 text-white'
+                }`}>
+                  {t('tooltips.login')}
+                </span>
+              </Link>
+            )}
           </div>
         </div>
 

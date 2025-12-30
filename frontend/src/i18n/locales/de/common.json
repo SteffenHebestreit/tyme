@@ -161,5 +161,8 @@
     "showing": "Anzeige",
     "entries": "Einträge",
     "perPage": "pro Seite"
+  },
+  "tooltips": {
+    "login": "Anmelden"
   }
 }

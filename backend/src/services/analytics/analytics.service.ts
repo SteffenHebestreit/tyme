@@ -85,13 +85,15 @@ export interface ProjectProfitability {
  * 
  * @interface YearlyFinancialSummary
  * @property {number} year - Year of the summary
- * @property {number} total_revenue - Total revenue from paid invoices (gross)
- * @property {number} total_expenses - Total expenses (gross)
- * @property {number} revenue_tax - VAT collected from revenue
+ * @property {number} gross_revenue_all - Total revenue from all payments including tax-excluded (for overview cards)
+ * @property {number} gross_expenses_all - Total expenses including all items (for overview cards)
+ * @property {number} total_revenue - Tax-relevant revenue from paid invoices (gross, excludes tax-excluded items)
+ * @property {number} total_expenses - Tax-relevant expenses (gross)
+ * @property {number} revenue_tax - VAT collected from tax-relevant revenue
  * @property {number} expense_tax - VAT paid on expenses (Vorsteuer)
- * @property {number} net_revenue - Revenue minus revenue tax
+ * @property {number} net_revenue - Tax-relevant revenue minus revenue tax
  * @property {number} net_expenses - Expenses minus expense tax
- * @property {number} net_profit - Net profit/loss (net revenue - net expenses)
+ * @property {number} net_profit - Net profit/loss (gross_revenue_all - gross_expenses_all, after tax)
  * @property {number} tax_payable - Net tax liability (revenue_tax - expense_tax)
  * @property {number} vat_prepayments - Total VAT prepayments made
  * @property {number} income_tax_prepayments - Total income tax prepayments made
@@ -100,6 +102,8 @@ export interface ProjectProfitability {
  */
 export interface YearlyFinancialSummary {
   year: number;
+  gross_revenue_all: number;
+  gross_expenses_all: number;
   total_revenue: number;
   total_expenses: number;
   revenue_tax: number;
@@ -373,14 +377,28 @@ export class AnalyticsService {
     const endDate = `${targetYear}-12-31`;
 
     // Get revenue data from payments, with tax amounts from linked invoices
+    // Returns both all-inclusive totals and tax-relevant totals
     const revenueQuery = `
       SELECT 
-        COALESCE(SUM(p.amount), 0) AS total_revenue,
+        COALESCE(SUM(p.amount), 0) AS gross_revenue_all,
         COALESCE(SUM(
           CASE 
-            WHEN i.id IS NOT NULL THEN i.tax_amount * (p.amount / i.total_amount)
-            WHEN p.exclude_from_tax THEN 0
-            ELSE p.amount * 0.19 / 1.19
+            WHEN COALESCE(p.exclude_from_tax, false) = false 
+                 AND (i.id IS NULL OR COALESCE(i.exclude_from_tax, false) = false)
+            THEN p.amount
+            ELSE 0
+          END
+        ), 0) AS total_revenue,
+        COALESCE(SUM(
+          CASE 
+            WHEN COALESCE(p.exclude_from_tax, false) = false 
+                 AND (i.id IS NULL OR COALESCE(i.exclude_from_tax, false) = false)
+            THEN
+              CASE 
+                WHEN i.id IS NOT NULL THEN i.tax_amount * (p.amount / i.total_amount)
+                ELSE p.amount * 0.19 / 1.19
+              END
+            ELSE 0
           END
         ), 0) AS revenue_tax
       FROM payments p
@@ -392,8 +410,10 @@ export class AnalyticsService {
     `;
 
     // Get expense data (approved expenses only)
+    // gross_expenses_all = all expenses, total_expenses = same (no exclude_from_tax on expenses)
     const expenseQuery = `
       SELECT 
+        COALESCE(SUM(amount), 0) AS gross_expenses_all,
         COALESCE(SUM(amount), 0) AS total_expenses,
         COALESCE(SUM(tax_amount), 0) AS expense_tax
       FROM expenses
@@ -429,6 +449,11 @@ export class AnalyticsService {
     const expenseData = expenseResult.rows[0];
     const prepaymentData = prepaymentResult.rows[0];
 
+    // All-inclusive totals (for overview cards)
+    const grossRevenueAll = Number(revenueData.gross_revenue_all);
+    const grossExpensesAll = Number(expenseData.gross_expenses_all);
+
+    // Tax-relevant totals (for tax breakdown)
     const totalRevenue = Number(revenueData.total_revenue);
     const revenueTax = Number(revenueData.revenue_tax);
     
@@ -439,14 +464,21 @@ export class AnalyticsService {
     const incomeTaxPrepayments = Number(prepaymentData.income_tax_prepayments);
     const totalPrepayments = Number(prepaymentData.total_prepayments);
 
+    // Tax-relevant net calculations
     const netRevenue = totalRevenue - revenueTax;
     const netExpenses = totalExpenses - expenseTax;
-    const netProfit = netRevenue - netExpenses;
+    
+    // Net profit based on all-inclusive totals (gross_revenue_all - taxes - gross_expenses_all + expense_tax)
+    // This represents actual profit: all income minus all expenses, accounting for VAT
+    const netProfit = (grossRevenueAll - revenueTax) - (grossExpensesAll - expenseTax);
+    
     const taxPayable = revenueTax - expenseTax;
     const remainingTaxPayable = taxPayable - vatPrepayments;
 
     return {
       year: targetYear,
+      gross_revenue_all: Number(grossRevenueAll.toFixed(2)),
+      gross_expenses_all: Number(grossExpensesAll.toFixed(2)),
       total_revenue: Number(totalRevenue.toFixed(2)),
       total_expenses: Number(totalExpenses.toFixed(2)),
       revenue_tax: Number(revenueTax.toFixed(2)),

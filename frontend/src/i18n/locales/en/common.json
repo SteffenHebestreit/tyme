@@ -161,5 +161,8 @@
     "showing": "Showing",
     "entries": "entries",
     "perPage": "per page"
+  },
+  "tooltips": {
+    "login": "Login"
   }
 }
