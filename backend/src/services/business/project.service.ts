@@ -41,8 +41,8 @@ export class ProjectService {
   async create(projectData: CreateProjectDto): Promise<IProject> {
     const db = getDbClient();
     const queryText = `
-      INSERT INTO projects (user_id, name, description, client_id, status, start_date, end_date, hourly_rate, currency, budget, rate_type, estimated_hours, recurring_payment)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) 
+      INSERT INTO projects (user_id, name, description, client_id, status, start_date, end_date, hourly_rate, currency, budget, rate_type, estimated_hours, recurring_payment, tags)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) 
       RETURNING id, user_id, name, description, client_id, status, start_date, end_date, hourly_rate, currency, budget, rate_type, estimated_hours, recurring_payment, tags, created_at, updated_at
     `;
     const values = [
@@ -59,6 +59,7 @@ export class ProjectService {
       projectData.rate_type || null,
       projectData.estimated_hours || null,
       projectData.recurring_payment || false,
+      projectData.tags || null,
     ];
 
     try {

@@ -1,7 +1,18 @@
 import { Pool } from 'pg';
 import dotenv from 'dotenv';
+import path from 'path';
 
-dotenv.config();
+// Load environment-specific .env file
+const envFile = process.env.NODE_ENV === 'test' 
+  ? '.env.test' 
+  : '.env';
+
+dotenv.config({ path: path.resolve(process.cwd(), envFile) });
+
+// Fallback to default .env if test env file doesn't exist
+if (!process.env.DATABASE_URL) {
+  dotenv.config();
+}
 
 // Ensure environment variables are loaded
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -12,13 +23,21 @@ if (!DATABASE_URL) {
 /**
  * PostgreSQL connection pool for database operations.
  * Configured via DATABASE_URL environment variable.
+ * Automatically uses test database when NODE_ENV=test.
  * 
  * @constant {Pool}
  */
-const pool = new Pool({
-  connectionString: DATABASE_URL,
-  // ssl: { rejectUnauthorized: false }, // Uncomment if using SSL with self-signed certs, or configure based on your DB
-});
+let pool: Pool | null = null;
+
+const getPool = (): Pool => {
+  if (!pool) {
+    pool = new Pool({
+      connectionString: DATABASE_URL,
+      // ssl: { rejectUnauthorized: false }, // Uncomment if using SSL with self-signed certs
+    });
+  }
+  return pool;
+};
 
 /**
  * Tests the database connection by executing a simple query.
@@ -34,7 +53,8 @@ const pool = new Pool({
  */
 const testConnection = async (): Promise<void> => {
   try {
-    await pool.query('SELECT NOW()');
+    const db = getPool();
+    await db.query('SELECT NOW()');
     console.log('✅ Database connection successful.');
   } catch (err) {
     console.error('❌ Database connection failed:', err);
@@ -52,8 +72,23 @@ const testConnection = async (): Promise<void> => {
  * const db = getDbClient();
  * const result = await db.query('SELECT * FROM users WHERE id = $1', [userId]);
  */
-const getDbClient = () => {
-  return pool;
+const getDbClient = (): Pool => {
+  return getPool();
 };
 
-export { testConnection, getDbClient };
+/**
+ * Closes the database connection pool.
+ * Should be called when shutting down the application or after tests.
+ * 
+ * @async
+ * @returns {Promise<void>}
+ */
+const closeDbConnection = async (): Promise<void> => {
+  if (pool) {
+    await pool.end();
+    pool = null;
+    console.log('✅ Database connection closed.');
+  }
+};
+
+export { testConnection, getDbClient, closeDbConnection };

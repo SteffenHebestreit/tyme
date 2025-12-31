@@ -76,6 +76,7 @@ export default function ExpensesPage({ startDate: propStartDate, endDate: propEn
     category: categoryFilter !== 'all' ? categoryFilter : undefined,
     status: statusFilter !== 'all' ? (statusFilter as ExpenseStatus) : undefined,
     search: searchTerm || undefined,
+    limit: 0, // Request all expenses (no limit) for complete chart data
   };
 
   const { data: expenses = [], isLoading, error, refetch } = useExpenses(filters);
@@ -265,19 +266,55 @@ export default function ExpensesPage({ startDate: propStartDate, endDate: propEn
     // Group expenses by month
     const monthlyData: Record<string, number> = {};
     expenses.forEach((expense: any) => {
-      const date = new Date(expense.expense_date);
-      const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      // Parse date string as local date to avoid timezone issues
+      // expense_date format is "YYYY-MM-DD" or "YYYY-MM-DDTHH:mm:ss..."
+      const dateStr = expense.expense_date.split('T')[0]; // Get just the date part
+      const [year, month] = dateStr.split('-');
+      const monthKey = `${year}-${month}`;
       monthlyData[monthKey] = (monthlyData[monthKey] || 0) + Number(expense.amount);
     });
 
-    // Sort by month and prepare chart data
-    const sortedMonths = Object.keys(monthlyData).sort();
-    const labels = sortedMonths.map(month => {
+    // Generate all months in the date range (or current year up to today if no date range)
+    const allMonths: string[] = [];
+    let startMonth: Date;
+    let endMonth: Date;
+    
+    // Get today's date in local timezone
+    const today = new Date();
+    const currentYear = today.getFullYear();
+    
+    if (propStartDate && propEndDate) {
+      // Use the provided date range (inclusive)
+      // Parse as local date by extracting year/month/day
+      const [startYear, startMonthNum, startDay] = propStartDate.split('-').map(Number);
+      const [endYear, endMonthNum, endDay] = propEndDate.split('-').map(Number);
+      startMonth = new Date(startYear, startMonthNum - 1, startDay);
+      endMonth = new Date(endYear, endMonthNum - 1, endDay);
+    } else {
+      // Default: January 1st of current year to today (max Dec 31st)
+      startMonth = new Date(currentYear, 0, 1); // January 1st
+      // End at current date, but no later than December 31st of current year
+      const dec31 = new Date(currentYear, 11, 31);
+      endMonth = today <= dec31 ? today : dec31;
+    }
+    
+    // Generate all months between start and end
+    const current = new Date(startMonth.getFullYear(), startMonth.getMonth(), 1);
+    const end = new Date(endMonth.getFullYear(), endMonth.getMonth(), 1);
+    
+    while (current <= end) {
+      const monthKey = `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, '0')}`;
+      allMonths.push(monthKey);
+      current.setMonth(current.getMonth() + 1);
+    }
+
+    // Use all months for labels and data (fill with 0 if no expenses)
+    const labels = allMonths.map(month => {
       const [year, monthNum] = month.split('-');
       const date = new Date(Number(year), Number(monthNum) - 1);
       return date.toLocaleDateString('de-DE', { month: 'short', year: '2-digit' });
     });
-    const data = sortedMonths.map(month => monthlyData[month]);
+    const data = allMonths.map(month => monthlyData[month] || 0);
 
     // Create chart
     trendChartInstanceRef.current = new Chart(trendChartRef.current, {
@@ -324,7 +361,7 @@ export default function ExpensesPage({ startDate: propStartDate, endDate: propEn
         trendChartInstanceRef.current.destroy();
       }
     };
-  }, [expenses]);
+  }, [expenses, propStartDate, propEndDate]);
 
   // getStatusBadgeColor removed - status column hidden for solo freelancer
 

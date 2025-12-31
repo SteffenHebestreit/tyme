@@ -188,6 +188,51 @@ services:
     networks:
       - project-network
 
+  # Backend Test Runner - for CI/CD pipelines
+  backend-tests:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.test
+    container_name: tyme-backend-tests
+    environment:
+      - NODE_ENV=test
+      - DOCKER_ENV=true
+      - DATABASE_URL=postgresql://postgres:testpass@tyme-test-db:5432/tyme_test
+      - JWT_SECRET=test-jwt-secret-for-testing-only
+      - SECRET_KEY=test-secret-key-for-testing-only
+    volumes:
+      - ./backend/coverage:/usr/src/app/coverage  # Mount coverage output
+    depends_on:
+      tyme-test-db:
+        condition: service_healthy
+    networks:
+      - project-network
+    profiles:
+      - test  # Only runs when explicitly requested
+
+  # Backend Test Runner with Coverage
+  backend-tests-coverage:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.test
+    container_name: tyme-backend-tests-coverage
+    command: npm run test:coverage
+    environment:
+      - NODE_ENV=test
+      - DOCKER_ENV=true
+      - DATABASE_URL=postgresql://postgres:testpass@tyme-test-db:5432/tyme_test
+      - JWT_SECRET=test-jwt-secret-for-testing-only
+      - SECRET_KEY=test-secret-key-for-testing-only
+    volumes:
+      - ./backend/coverage:/usr/src/app/coverage  # Mount coverage output
+    depends_on:
+      tyme-test-db:
+        condition: service_healthy
+    networks:
+      - project-network
+    profiles:
+      - test  # Only runs when explicitly requested
+
   # Redis Cache Session Store
   redis:
     image: redis:7.4-alpine

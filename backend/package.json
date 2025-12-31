@@ -7,9 +7,17 @@
     "start": "node dist/index.ts",
     "dev": "sh ./scripts/dev-watch.sh",
     "build": "tsc",
-    "test": "jest",
+    "test": "NODE_ENV=test jest",
+    "test:watch": "NODE_ENV=test jest --watch",
+    "test:coverage": "NODE_ENV=test jest --coverage",
+    "test:ci": "NODE_ENV=test DOCKER_ENV=true jest --ci --coverage --reporters=default --reporters=jest-junit --forceExit",
+    "test:docker": "docker compose --profile test run --rm backend-tests",
+    "test:docker:coverage": "docker compose --profile test run --rm backend-tests-coverage",
+    "test:unit": "NODE_ENV=test jest --testPathPattern=tests/unit",
+    "test:integration": "NODE_ENV=test jest --testPathPattern=tests/integration",
     "lint": "eslint . --ext .ts,.js",
-    "lint:fix": "eslint . --ext .ts,.js --fix"
+    "lint:fix": "eslint . --ext .ts,.js --fix",
+    "pretest": "echo 'Ensure tyme-test-db container is running: docker compose up -d tyme-test-db'"
   },
   "keywords": [
     "tyme",
@@ -80,6 +88,7 @@
     "@typescript-eslint/parser": "^6.2.0",
     "eslint": "^8.45.0",
     "jest": "^29.6.1",
+    "jest-junit": "^16.0.0",
     "pg-mem": "^2.7.3",
     "supertest": "^6.3.3",
     "ts-jest": "^29.1.1",

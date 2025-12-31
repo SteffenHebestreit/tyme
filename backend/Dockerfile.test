@@ -1,0 +1,29 @@
+# tyme Backend - Test Runner Dockerfile
+# Used for running tests inside containers for CI/CD
+
+FROM node:20-alpine
+
+# Set working directory
+WORKDIR /usr/src/app
+
+# Install dependencies for native modules
+RUN apk add --no-cache python3 make g++
+
+# Copy package files first (for better layer caching)
+COPY package*.json ./
+
+# Install all dependencies (including devDependencies for testing)
+RUN npm ci
+
+# Copy source code
+COPY . .
+
+# Build TypeScript
+RUN npm run build
+
+# Set environment for testing
+ENV NODE_ENV=test
+ENV DOCKER_ENV=true
+
+# Default command runs tests
+CMD ["npm", "run", "test:ci"]

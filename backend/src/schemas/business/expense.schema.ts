@@ -143,7 +143,7 @@ export const expenseFilterSchema = Joi.object({
   date_from: Joi.string().pattern(/^\d{4}-\d{2}-\d{2}$/).optional(),
   date_to: Joi.string().pattern(/^\d{4}-\d{2}-\d{2}$/).optional(),
   search: Joi.string().max(100).optional(),
-  limit: Joi.number().integer().min(1).max(100).default(50),
+  limit: Joi.number().integer().min(0).max(10000).default(50), // 0 = unlimited
   offset: Joi.number().integer().min(0).default(0),
   sort_by: Joi.string().valid('expense_date', 'amount', 'created_at', 'category').default('expense_date'),
   sort_order: Joi.string().valid('asc', 'desc').default('desc'),

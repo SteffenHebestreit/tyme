@@ -106,5 +106,182 @@ describe('ProjectService', () => {
       const foundProject = await projectService.findById(newProject.id);
       expect(foundProject).toBeNull();
     });
+
+    it('should return false when deleting non-existent project', async () => {
+      const result = await projectService.delete('00000000-0000-0000-0000-000000000000');
+      expect(result).toBe(false);
+    });
+  });
+
+  describe('create with all fields', () => {
+    it('should create a project with all optional fields', async () => {
+      const projectData: CreateProjectDto = {
+        user_id: TEST_USER_ID,
+        name: 'Full Project',
+        client_id: testClient.id,
+        description: 'A fully detailed project',
+        status: 'active',
+        start_date: new Date('2024-01-01'),
+        end_date: new Date('2024-12-31'),
+        hourly_rate: 100.00,
+        budget: 50000.00,
+        estimated_hours: 500,
+        currency: 'EUR',
+        tags: ['important', 'priority'],
+      };
+
+      const project = await projectService.create(projectData);
+
+      expect(project.name).toBe('Full Project');
+      expect(project.description).toBe('A fully detailed project');
+      expect(parseFloat(project.hourly_rate as any)).toBe(100);
+      expect(parseFloat(project.budget as any)).toBe(50000);
+      expect(project.currency).toBe('EUR');
+      expect(project.tags).toContain('important');
+    });
+  });
+
+  describe('findAll with filters', () => {
+    it('should filter projects by status', async () => {
+      await projectService.create({ 
+        user_id: TEST_USER_ID, 
+        name: 'Active Filter Project', 
+        client_id: testClient.id,
+        status: 'active',
+      });
+
+      const projects = await projectService.findAll(TEST_USER_ID, { status: 'active' });
+      
+      projects.forEach(project => {
+        expect(project.status).toBe('active');
+      });
+    });
+
+    it('should filter projects by client_id', async () => {
+      const projects = await projectService.findAll(TEST_USER_ID, { client_id: testClient.id });
+      
+      projects.forEach(project => {
+        expect(project.client_id).toBe(testClient.id);
+      });
+    });
+
+    it('should filter projects by search term', async () => {
+      await projectService.create({ 
+        user_id: TEST_USER_ID, 
+        name: 'Unique Searchable Project XYZ999', 
+        client_id: testClient.id,
+      });
+
+      const projects = await projectService.findAll(TEST_USER_ID, { search: 'XYZ999' });
+      
+      expect(projects.length).toBeGreaterThanOrEqual(1);
+      expect(projects.some(p => p.name.includes('XYZ999'))).toBe(true);
+    });
+
+    it('should return empty array for user with no projects', async () => {
+      const projects = await projectService.findAll('00000000-0000-0000-0000-000000000099');
+      expect(projects).toEqual([]);
+    });
+  });
+
+  describe('findById edge cases', () => {
+    it('should return null for non-existent project', async () => {
+      const project = await projectService.findById('00000000-0000-0000-0000-000000000000');
+      expect(project).toBeNull();
+    });
+  });
+
+  describe('update with more fields', () => {
+    it('should update project description', async () => {
+      const newProject = await projectService.create({ 
+        user_id: TEST_USER_ID, 
+        name: 'Description Update Project', 
+        client_id: testClient.id 
+      });
+      
+      const updated = await projectService.update(newProject.id, { 
+        description: 'Updated description' 
+      });
+      
+      expect(updated?.description).toBe('Updated description');
+    });
+
+    it('should update project hourly_rate', async () => {
+      const newProject = await projectService.create({ 
+        user_id: TEST_USER_ID, 
+        name: 'Rate Update Project', 
+        client_id: testClient.id,
+        hourly_rate: 50.00,
+      });
+      
+      const updated = await projectService.update(newProject.id, { hourly_rate: 75.00 });
+      
+      expect(parseFloat(updated?.hourly_rate as any)).toBe(75);
+    });
+
+    it('should update project budget', async () => {
+      const newProject = await projectService.create({ 
+        user_id: TEST_USER_ID, 
+        name: 'Budget Update Project', 
+        client_id: testClient.id,
+      });
+      
+      const updated = await projectService.update(newProject.id, { budget: 25000.00 });
+      
+      expect(parseFloat(updated?.budget as any)).toBe(25000);
+    });
+
+    it('should update project dates', async () => {
+      const newProject = await projectService.create({ 
+        user_id: TEST_USER_ID, 
+        name: 'Date Update Project', 
+        client_id: testClient.id,
+      });
+      
+      const updated = await projectService.update(newProject.id, { 
+        start_date: new Date('2024-03-01'),
+        end_date: new Date('2024-09-30'),
+      });
+      
+      expect(new Date(updated!.start_date!).toISOString().split('T')[0]).toBe('2024-03-01');
+      expect(new Date(updated!.end_date!).toISOString().split('T')[0]).toBe('2024-09-30');
+    });
+
+    it('should update project tags', async () => {
+      const newProject = await projectService.create({ 
+        user_id: TEST_USER_ID, 
+        name: 'Tags Update Project', 
+        client_id: testClient.id,
+        tags: ['original'],
+      });
+      
+      const updated = await projectService.update(newProject.id, { 
+        tags: ['updated', 'new-tag'] 
+      });
+      
+      expect(updated?.tags).toContain('updated');
+      expect(updated?.tags).toContain('new-tag');
+    });
+
+    it('should return null when updating non-existent project', async () => {
+      const updated = await projectService.update('00000000-0000-0000-0000-000000000000', { 
+        name: 'Does Not Exist' 
+      });
+      
+      expect(updated).toBeNull();
+    });
+
+    it('should return existing project when no changes provided', async () => {
+      const newProject = await projectService.create({ 
+        user_id: TEST_USER_ID, 
+        name: 'No Change Project', 
+        client_id: testClient.id,
+      });
+      
+      const updated = await projectService.update(newProject.id, {});
+      
+      expect(updated?.id).toBe(newProject.id);
+      expect(updated?.name).toBe('No Change Project');
+    });
   });
 });

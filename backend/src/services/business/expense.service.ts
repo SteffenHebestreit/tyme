@@ -349,10 +349,14 @@ export class ExpenseService {
     // Get paginated results
     const sortBy = filters.sort_by || 'expense_date';
     const sortOrder = filters.sort_order || 'desc';
-    const limit = filters.limit || 50;
     const offset = filters.offset || 0;
+    
+    // If limit is 0 or -1, fetch all results (no limit)
+    // Otherwise use provided limit or default to 50
+    const useLimit = filters.limit === 0 || filters.limit === -1 ? false : true;
+    const limit = useLimit ? (filters.limit || 50) : total;
 
-    const dataQuery = `
+    let dataQuery = `
       SELECT 
         e.*,
         p.name AS project_name,
@@ -362,10 +366,14 @@ export class ExpenseService {
       LEFT JOIN clients c ON p.client_id = c.id
       ${whereClause}
       ORDER BY e.${sortBy} ${sortOrder.toUpperCase()}
-      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
     `;
 
-    values.push(limit, offset);
+    // Only add LIMIT/OFFSET if we're actually limiting
+    if (useLimit) {
+      dataQuery += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+      values.push(limit, offset);
+    }
+    
     const dataResult = await this.db.query(dataQuery, values);
 
     return {
