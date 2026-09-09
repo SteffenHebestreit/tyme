@@ -150,8 +150,14 @@ export class TimeEntryController {
 
         // Keep legacy date_start field for backward compatibility during transition
         // Construct proper ISO timestamp from date and time strings
+        // The schema accepts both HH:MM and HH:MM:SS, so append seconds only when
+        // they are missing. Blindly appending ':00' turned a valid HH:MM:SS time
+        // into '...T09:00:00:00.000Z' — an invalid date, which reached Postgres
+        // as NaN and failed the insert with a 500.
         date_start: value.entry_date && value.entry_time
-          ? new Date(`${value.entry_date}T${value.entry_time}:00.000Z`)
+          ? new Date(
+              `${value.entry_date}T${value.entry_time.length === 5 ? `${value.entry_time}:00` : value.entry_time}.000Z`
+            )
           : undefined,
       };
 

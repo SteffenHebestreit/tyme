@@ -11,6 +11,23 @@ import { logger } from '../../utils/logger';
 const db = getDbClient();
 
 /**
+ * Normalises a date to the YYYY-MM-DD form Postgres' date type expects.
+ *
+ * Joi turns an ISO date in the request body into a Date object, and
+ * String(new Date(...)) yields "Wed Jan 01 2026 ..." — slicing that gives
+ * "Wed Jan 01", which Postgres rejects with a DateTimeParseError.
+ *
+ * @param value - Date, 'YYYY-MM-DD' string, or nullish
+ * @returns The date-only string, or null
+ */
+function toDateOnly(value: any): string | null {
+  if (!value) return null;
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  const text = String(value);
+  return /^\d{4}-\d{2}-\d{2}/.test(text) ? text.slice(0, 10) : null;
+}
+
+/**
  * Service for managing project-related business logic and database operations.
  * Handles CRUD operations for projects in a multi-tenant environment.
  * Projects are associated with clients and can include billing rates, timelines, and status tracking.
@@ -75,7 +92,7 @@ export class ProjectService {
           result.rows[0].id,
           result.rows[0].user_id,
           result.rows[0].hourly_rate,
-          projectData.start_date ? String(projectData.start_date).slice(0, 10) : null,
+          toDateOnly(projectData.start_date),
           'Initial rate'
         );
       }

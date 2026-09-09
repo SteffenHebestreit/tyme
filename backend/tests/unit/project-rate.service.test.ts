@@ -308,6 +308,24 @@ describe('ProjectRateService', () => {
       expect(periods[0].hourly_rate).toBe(90);
     });
 
+    it('accepts a Date start_date from the API layer', async () => {
+      // Joi converts an ISO date in the request body into a Date object, so the
+      // service must handle both. Passing a string only (as the other tests do)
+      // hid a DateTimeParseError that broke every project created through the API.
+      const project = await projectService.create({
+        user_id: TEST_USER_ID,
+        name: 'Date Object Project',
+        client_id: testClient.id,
+        hourly_rate: 120,
+        start_date: new Date('2026-01-01') as any,
+      });
+
+      const periods = await rateService.listRates(project.id, TEST_USER_ID);
+
+      expect(periods).toHaveLength(1);
+      expect(periods[0].valid_from).toBe('2026-01-01');
+    });
+
     it('opens a new period when the rate is edited on the project', async () => {
       const project = await makeProject(100);
       await projectService.update(project.id, { hourly_rate: 180 });
