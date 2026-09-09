@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased (since v1.4.1)
+## Unreleased (since v1.5.0)
+
+## v1.5.0 (2026-09-09)
 
 ### Projects — hourly rates that change over time
 - **Raising a rate no longer re-prices work you already logged.** A project's rate is now a
