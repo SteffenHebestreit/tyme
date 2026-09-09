@@ -13,6 +13,7 @@ import { DepreciationSettings } from '@/components/business/expenses/Depreciatio
 import { useAnalyzeDepreciationDraft } from '@/hooks/api/useDepreciation';
 import { Slot } from '@/plugins/slots';
 import { usePlugins } from '@/api/hooks/usePlugins';
+import { extractErrorMessage } from '../../../utils/error';
 
 interface AddExpenseModalProps {
   isOpen: boolean;
@@ -234,9 +235,9 @@ export function AddExpenseModal({ isOpen, onClose, onExpenseAdded }: AddExpenseM
       } else {
         setAnalysisMessage(result.message || 'Analysis failed. Please fill in the form manually.');
       }
-    } catch (error: any) {
+    } catch (error) {
       console.error('Failed to analyze receipt:', error);
-      setAnalysisMessage(`✗ Analysis failed: ${error.message || 'Unknown error'}`);
+      setAnalysisMessage(`✗ Analysis failed: ${extractErrorMessage(error)}`);
     } finally {
       setIsAnalyzing(false);
     }
@@ -297,11 +298,11 @@ export function AddExpenseModal({ isOpen, onClose, onExpenseAdded }: AddExpenseM
       setDepreciationMessage(
         `✓ ${t('ai.depreciationDone', 'Depreciation analysis complete')} (${analysis.confidence}%): ${analysis.reasoning}`
       );
-    } catch (error: any) {
+    } catch (error) {
       console.error('Failed to analyze depreciation:', error);
       setDepreciationMessage(
         `✗ ${t('ai.depreciationFailed', 'Depreciation analysis failed')}: ${
-          error?.response?.data?.message || error?.message || 'Unknown error'
+          extractErrorMessage(error)
         }`
       );
     }
@@ -394,13 +395,13 @@ export function AddExpenseModal({ isOpen, onClose, onExpenseAdded }: AddExpenseM
 
       onExpenseAdded();
       onClose();
-    } catch (error: any) {
+    } catch (error) {
       console.error('Failed to create split expenses:', error);
       setSplitProgress(
         `✗ ${t('ai.splitFailed', 'Created {{created}} of {{total}} expenses, then failed', {
           created,
           total: chosen.length,
-        })}: ${error?.response?.data?.message || error?.message || 'Unknown error'}`
+        })}: ${extractErrorMessage(error)}`
       );
       if (created > 0) onExpenseAdded();
     } finally {

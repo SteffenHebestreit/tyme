@@ -9,6 +9,7 @@ import { useTranslation } from 'react-i18next';
 import { DepreciationSettings } from '@/components/business/expenses/DepreciationSettings';
 import { DepreciationAnalysisSection } from '@/components/business/expenses/DepreciationAnalysisSection';
 import { Slot } from '@/plugins/slots';
+import { extractErrorMessage } from '../../../utils/error';
 
 interface ExpenseDetailModalProps {
   expenseId: string;
@@ -133,13 +134,11 @@ export function ExpenseDetailModal({
       setIsEditing(false);
       setEditedExpense(null);
       onExpenseUpdated();
-    } catch (error: any) {
+    } catch (error) {
       console.error('Failed to update expense:', error);
-      const reason =
-        error?.response?.data?.message ||
-        error?.response?.data?.error ||
-        error?.message ||
-        'Unknown error';
+      // The API returns the detail under `message`, older paths under `error`.
+      const fallback = (error as { response?: { data?: { error?: string } } })?.response?.data?.error;
+      const reason = fallback ?? extractErrorMessage(error);
       alert(`Failed to update expense: ${reason}`);
     }
   };

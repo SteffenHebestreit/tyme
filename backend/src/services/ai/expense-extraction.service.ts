@@ -481,7 +481,7 @@ export class ExpenseExtractionService {
 
     if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
 
-    const euro = trimmed.match(/^(\d{1,2})[.\/](\d{1,2})[.\/](\d{4})$/);
+    const euro = trimmed.match(/^(\d{1,2})[./](\d{1,2})[./](\d{4})$/);
     if (euro) {
       const [, day, month, year] = euro;
       return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
