@@ -1,4 +1,4 @@
-import { ClientDocumentService } from '../../src/services/business/client-document.service';
+import { ClientDocumentService, DocumentAlreadySupersededError } from '../../src/services/business/client-document.service';
 import { ClientService } from '../../src/services/business/client.service';
 import { ProjectService } from '../../src/services/business/project.service';
 import { getDbClient } from '../../src/utils/database';
@@ -63,6 +63,8 @@ describe('ClientDocumentService', () => {
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
       );
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_client_documents_supersedes
+        ON client_documents(supersedes_document_id) WHERE supersedes_document_id IS NOT NULL;
     `);
   });
 
@@ -229,6 +231,47 @@ describe('ClientDocumentService', () => {
 
       await expect(service.deleteDocument(doc.id, OTHER_USER_ID)).rejects.toThrow();
       expect(await service.getDocumentById(doc.id, TEST_USER_ID)).not.toBeNull();
+    });
+  });
+  describe('a document can only be superseded once', () => {
+    it('rejects a second version of the same predecessor with a typed conflict', async () => {
+      const v1 = await upload({ title: 'Vertrag' });
+      await upload({ title: 'Nachtrag A', supersedes_document_id: v1.id });
+
+      // Two uploads racing on the same predecessor both read its version and
+      // both write version+1 — a row lock cannot stop it, because the value read
+      // is never the value written. The unique index is what actually decides.
+      await expect(
+        upload({ title: 'Nachtrag B', supersedes_document_id: v1.id })
+      ).rejects.toBeInstanceOf(DocumentAlreadySupersededError);
+    });
+
+    it('names the version that won, so the user can find it', async () => {
+      const v1 = await upload({ title: 'Vertrag' });
+      const winner = await upload({ title: 'Nachtrag A', supersedes_document_id: v1.id });
+
+      try {
+        await upload({ title: 'Nachtrag B', supersedes_document_id: v1.id });
+        throw new Error('should have thrown');
+      } catch (error) {
+        expect(error).toBeInstanceOf(DocumentAlreadySupersededError);
+        expect((error as DocumentAlreadySupersededError).currentDocumentId).toBe(winner.id);
+        expect((error as DocumentAlreadySupersededError).currentVersion).toBe(2);
+      }
+    });
+
+    it('does not upload a file when the conflict is detected', async () => {
+      const v1 = await upload({ title: 'Vertrag' });
+      await upload({ title: 'Nachtrag A', supersedes_document_id: v1.id });
+      uploadFile.mockClear();
+
+      await expect(
+        upload({ title: 'Nachtrag B', supersedes_document_id: v1.id })
+      ).rejects.toBeInstanceOf(DocumentAlreadySupersededError);
+
+      // The pre-flight check runs before the storage round trip, so a rejected
+      // upload leaves no orphaned object behind.
+      expect(uploadFile).not.toHaveBeenCalled();
     });
   });
 });

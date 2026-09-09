@@ -5,7 +5,7 @@
  */
 
 import { Request, Response } from 'express';
-import { ClientDocumentService } from '../../../services/business/client-document.service';
+import { ClientDocumentService, DocumentAlreadySupersededError } from '../../../services/business/client-document.service';
 import {
   createClientDocumentSchema,
   updateClientDocumentSchema,
@@ -66,7 +66,17 @@ export class ClientDocumentController {
       res.status(201).json(document);
     } catch (error: any) {
       logger.error('Upload client document error:', error);
-      if (error.message.includes('not found') || error.message.includes('unauthorized')) {
+      // Keyed on the error type, not a message substring: this is the concurrent
+      // upload the unique index rejects, and the user needs to know WHICH version
+      // won rather than just that their upload failed.
+      if (error instanceof DocumentAlreadySupersededError) {
+        res.status(409).json({
+          error: 'Conflict',
+          message: error.message,
+          current_document_id: error.currentDocumentId,
+          current_version: error.currentVersion,
+        });
+      } else if (error.message.includes('not found') || error.message.includes('unauthorized')) {
         res.status(404).json({ error: 'Not found', message: error.message });
       } else if (error.message.includes('does not belong')) {
         res.status(400).json({ error: 'Validation error', message: error.message });

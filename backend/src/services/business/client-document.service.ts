@@ -47,6 +47,22 @@ function mapRow(row: any): ClientDocumentWithRelations {
   };
 }
 
+/**
+ * Raised when a document that has already been superseded is superseded again.
+ *
+ * Carries the winning version so the caller can tell the user which document
+ * replaced it, instead of a bare failure.
+ */
+export class DocumentAlreadySupersededError extends Error {
+  constructor(
+    public readonly currentDocumentId: string | null,
+    public readonly currentVersion: number | null
+  ) {
+    super('This document has already been superseded by a newer version.');
+    this.name = 'DocumentAlreadySupersededError';
+  }
+}
+
 export class ClientDocumentService {
   private db = getDbClient();
 
@@ -118,6 +134,20 @@ export class ClientDocumentService {
 
     if (data.project_id && !(await this.isProjectValidFor(data.project_id, clientId, userId))) {
       throw new Error('Project not found or does not belong to this client');
+    }
+
+    // Check before the storage round trip, so the common case fails without
+    // having uploaded a file first. This is advisory only — the unique index is
+    // what actually decides, and the 23505 below is the authoritative answer.
+    if (data.supersedes_document_id) {
+      const existing = await this.db.query(
+        `SELECT d.id, d.version FROM client_documents d
+         WHERE d.supersedes_document_id = $1`,
+        [data.supersedes_document_id]
+      );
+      if (existing.rows.length > 0) {
+        throw new DocumentAlreadySupersededError(existing.rows[0].id, existing.rows[0].version);
+      }
     }
 
     // Import storage service dynamically to avoid circular dependencies
@@ -198,6 +228,20 @@ export class ClientDocumentService {
       await client.query('COMMIT');
       return mapRow(result.rows[0]);
     } catch (error) {
+      // The race the unique index exists for: another upload superseded the same
+      // predecessor between our pre-flight check and our INSERT.
+      if ((error as any)?.code === '23505'
+          && (error as any)?.constraint === 'uq_client_documents_supersedes') {
+        const winner = await this.db
+          .query(`SELECT id, version FROM client_documents WHERE supersedes_document_id = $1`,
+                 [data.supersedes_document_id])
+          .catch(() => ({ rows: [] as any[] }));
+        error = new DocumentAlreadySupersededError(
+          winner.rows[0]?.id ?? null,
+          winner.rows[0]?.version ?? null
+        );
+      }
+
       // A failing ROLLBACK (dead connection) must not stop the file cleanup, or
       // mask the error that actually caused the failure.
       await client.query('ROLLBACK').catch((rollbackError) => {

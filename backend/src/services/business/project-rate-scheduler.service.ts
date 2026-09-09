@@ -17,6 +17,7 @@
 
 import cron, { ScheduledTask } from 'node-cron';
 import { getDbClient } from '../../utils/database';
+import { runRateRepair } from './time-entry-rate-repair.service';
 import { logger } from '../../utils/logger';
 
 /**
@@ -71,6 +72,11 @@ class ProjectRateSchedulerService {
         if (updated > 0) {
           logger.info(`[ProjectRates] ${updated} project rate(s) advanced to a newly effective period`);
         }
+
+        // Catch entries that were saved unstamped since the last run — a rate
+        // lookup can fail without blocking time tracking, and an unstamped entry
+        // is re-priced at the current rate when it reaches an invoice.
+        await runRateRepair('daily');
       } catch (error) {
         logger.error('[ProjectRates] Rate resync job failed:', error);
       }

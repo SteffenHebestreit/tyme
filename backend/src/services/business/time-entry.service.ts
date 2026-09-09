@@ -311,7 +311,10 @@ export class TimeEntryService {
     }
     if (timeEntryData.hourly_rate !== undefined) {
       setParts.push(`hourly_rate = $${paramIndex++}`);
-      values.push(timeEntryData.hourly_rate || null);
+      // ?? not ||: a deliberate rate of 0 (goodwill, written-off work) is a real
+      // rate. || turned it into NULL, and an unstamped entry is re-priced at the
+      // project's current rate by invoicing.
+      values.push(timeEntryData.hourly_rate ?? null);
     }
     // Legacy field support
     if (timeEntryData.date_start !== undefined) {

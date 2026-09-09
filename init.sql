@@ -2393,8 +2393,28 @@ CREATE TABLE IF NOT EXISTS public.client_documents (
 CREATE INDEX IF NOT EXISTS idx_client_documents_user ON public.client_documents(user_id);
 CREATE INDEX IF NOT EXISTS idx_client_documents_client ON public.client_documents(client_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_client_documents_project ON public.client_documents(project_id) WHERE project_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_client_documents_supersedes ON public.client_documents(supersedes_document_id) WHERE supersedes_document_id IS NOT NULL;
+-- A document may be superseded at most once: a version chain is a linear list,
+-- so exactly one document may claim to replace any given one. Enforced in the
+-- database because a lock convention only holds while every writer remembers it,
+-- and a second successor silently hides a signed document in the UI.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_client_documents_supersedes ON public.client_documents(supersedes_document_id) WHERE supersedes_document_id IS NOT NULL;
 
+
+-- Migration: one-time migration ledger (idempotent)
+-- Data migrations, unlike DDL, are not naturally idempotent and need to know
+-- whether they have already run. Deriving that from the data itself is what let
+-- a deleted rate period come back on the next restart.
+CREATE TABLE IF NOT EXISTS public.schema_migrations (
+    name text PRIMARY KEY,
+    applied_at timestamp with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    details jsonb
+);
+
+-- Migration: index the unstamped time entries the rate repair looks for (idempotent)
+-- Makes the recurring repair cost an index scan over exactly the broken rows,
+-- so it is proportional to the damage rather than the table, and drains to
+-- nothing once every entry carries its rate.
+CREATE INDEX IF NOT EXISTS idx_time_entries_unstamped ON public.time_entries(project_id, entry_date) WHERE hourly_rate IS NULL AND project_id IS NOT NULL;
 
 --
 -- PostgreSQL database dump complete
