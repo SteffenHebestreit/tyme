@@ -229,14 +229,17 @@ export class ClientDocumentService {
       return mapRow(result.rows[0]);
     } catch (error) {
       // The race the unique index exists for: another upload superseded the same
-      // predecessor between our pre-flight check and our INSERT.
+      // predecessor between our pre-flight check and our INSERT. Translated into
+      // a separate variable rather than reassigning the caught one, so the
+      // original is still available while cleaning up below.
+      let thrown: unknown = error;
       if ((error as any)?.code === '23505'
           && (error as any)?.constraint === 'uq_client_documents_supersedes') {
         const winner = await this.db
           .query(`SELECT id, version FROM client_documents WHERE supersedes_document_id = $1`,
                  [data.supersedes_document_id])
           .catch(() => ({ rows: [] as any[] }));
-        error = new DocumentAlreadySupersededError(
+        thrown = new DocumentAlreadySupersededError(
           winner.rows[0]?.id ?? null,
           winner.rows[0]?.version ?? null
         );
@@ -254,7 +257,7 @@ export class ClientDocumentService {
         logger.error(`Error removing orphaned upload ${uploadResult.url}:`, cleanupError);
       });
 
-      throw error;
+      throw thrown;
     } finally {
       client.release();
     }
