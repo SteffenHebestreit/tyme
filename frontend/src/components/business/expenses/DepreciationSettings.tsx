@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 interface DepreciationSettingsProps {
   depreciationType: 'none' | 'immediate' | 'partial' | null;
   depreciationYears?: number | null;
-  depreciationMethod?: 'linear' | 'declining' | null;
+  depreciationMethod?: 'linear' | 'degressive' | null;
   onChange: (field: string, value: any) => void;
 }
 
@@ -24,7 +24,9 @@ export function DepreciationSettings({
 
   const depreciationMethodOptions = [
     { value: 'linear', label: t('depreciation.methods.linear', 'Linear') },
-    { value: 'declining', label: t('depreciation.methods.declining', 'Declining Balance') },
+    // Must stay 'degressive': both expenses_depreciation_method_check and the
+    // Joi update schema reject anything else.
+    { value: 'degressive', label: t('depreciation.methods.degressive', 'Declining Balance') },
   ];
 
   return (

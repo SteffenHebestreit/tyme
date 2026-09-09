@@ -106,6 +106,44 @@ export function useAnalyzeDepreciation(expenseId: string) {
 }
 
 /**
+ * Hook to analyze an unsaved expense for depreciation using AI.
+ *
+ * Unlike {@link useAnalyzeDepreciation} this needs no expense ID — it posts the
+ * values currently held in the Add Expense form. That lets the modal offer the
+ * AfA analysis straight after the receipt analysis, instead of making the user
+ * save the expense, reopen it and analyze again. Nothing is persisted; the
+ * caller applies the recommendation to the form and saves once.
+ *
+ * @example
+ * const { mutateAsync: analyzeDraft, isPending } = useAnalyzeDepreciationDraft();
+ * const result = await analyzeDraft({ description, category, amount, ... });
+ */
+export interface DraftDepreciationInput {
+  description: string;
+  notes?: string;
+  category: string;
+  amount: number;
+  net_amount: number;
+  tax_amount: number;
+  /** Decimal, e.g. 0.19 for 19% */
+  tax_rate: number;
+  /** YYYY-MM-DD */
+  expense_date: string;
+}
+
+export function useAnalyzeDepreciationDraft() {
+  return useMutation<DepreciationAnalysis, Error, DraftDepreciationInput>({
+    mutationFn: async (input: DraftDepreciationInput) => {
+      const response = await api.post('/expenses/analyze-depreciation/draft', input);
+      return response.data;
+    },
+    onError: (error) => {
+      console.error('[useAnalyzeDepreciationDraft] Error:', error);
+    },
+  });
+}
+
+/**
  * Hook to update depreciation settings for an expense
  *
  * @param {string} expenseId - Expense ID to update

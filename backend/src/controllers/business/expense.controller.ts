@@ -48,6 +48,7 @@ export class ExpenseController {
 
   // Depreciation (AfA)
   analyzeDepreciation = this.depreciation.analyzeDepreciation;
+  analyzeDepreciationDraft = this.depreciation.analyzeDepreciationDraft;
   updateDepreciation = this.depreciation.updateDepreciation;
   getDepreciationSchedule = this.depreciation.getDepreciationSchedule;
 }

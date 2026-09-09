@@ -111,6 +111,10 @@ router.post('/recurring/trigger', expenseController.triggerRecurringExpenses);
  * Depreciation routes
  */
 
+// Analyze an unsaved expense (values straight from the Add Expense form).
+// Registered before the /:id routes so the literal path always wins.
+router.post('/analyze-depreciation/draft', expenseController.analyzeDepreciationDraft);
+
 // Analyze expense for depreciation using AI
 router.post('/:id/analyze-depreciation', expenseController.analyzeDepreciation);
 

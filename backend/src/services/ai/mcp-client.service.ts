@@ -44,18 +44,24 @@ export class MCPClientService {
   }
 
   /**
-   * Extract text from PDF file using MCP server
-   * 
-   * @param fileBuffer - PDF file buffer
-   * @param filename - Original filename
+   * Extract text from a receipt file using the MCP server.
+   *
+   * The file_to_markdown tool converts PDFs and images alike: for an image it
+   * runs markitdown's LLM description path (FTMD_MARKITDOWN_ENABLE_LLM), which
+   * reads a photographed or scanned receipt well enough for the downstream
+   * extraction prompt. The MCP server picks the converter from the filename
+   * extension, so the real filename has to be passed through.
+   *
+   * @param fileBuffer - Receipt file buffer (PDF or image)
+   * @param filename - Original filename, extension included
    * @returns Extracted text in markdown format
    */
-  async extractPDFText(fileBuffer: Buffer, filename: string): Promise<string> {
+  async extractDocumentText(fileBuffer: Buffer, filename: string): Promise<string> {
     try {
       // Convert buffer to base64
       const base64Content = fileBuffer.toString('base64');
 
-      logger.info(`Extracting text from PDF: ${filename} (${fileBuffer.length} bytes)`);
+      logger.info(`Extracting text from ${filename} (${fileBuffer.length} bytes)`);
 
       // Create form data with params as JSON string (as expected by MCP server)
       const formData = new FormData();
@@ -97,8 +103,8 @@ export class MCPClientService {
       
       throw new Error(response.data.error || 'Unknown error during PDF extraction');
     } catch (error: any) {
-      logger.error(`Failed to extract text from PDF ${filename}:`, error.message);
-      throw new Error(`PDF text extraction failed: ${error.message}`);
+      logger.error(`Failed to extract text from ${filename}:`, error.message);
+      throw new Error(`Text extraction failed: ${error.message}`);
     }
   }
 

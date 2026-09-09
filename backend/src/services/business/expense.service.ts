@@ -443,6 +443,29 @@ export class ExpenseService {
         values.push(data.description);
       }
 
+      // The expenses table enforces `abs(amount - (net_amount + tax_amount)) < 0.01`.
+      // A client that changes only the gross amount — which is what adjusting a
+      // single month of a recurring bill looks like — would otherwise violate
+      // that constraint and get an opaque 500, so derive the missing halves of
+      // the VAT split here rather than making every caller remember to.
+      const grossChanged = data.amount !== undefined;
+      const rateChanged = data.tax_rate !== undefined;
+      const splitProvided = data.net_amount !== undefined && data.tax_amount !== undefined;
+
+      let derivedNetAmount: number | undefined;
+      let derivedTaxAmount: number | undefined;
+
+      if ((grossChanged || rateChanged) && !splitProvided) {
+        const gross = grossChanged ? Number(data.amount) : Number(currentExpense.amount);
+        const rate = rateChanged ? Number(data.tax_rate) : Number(currentExpense.tax_rate);
+        // tax_rate is stored as a decimal (0.19), but tolerate a percentage (19).
+        const effectiveRate = rate > 1 ? rate / 100 : rate;
+        const net = gross / (1 + effectiveRate);
+
+        derivedNetAmount = parseFloat(net.toFixed(2));
+        derivedTaxAmount = parseFloat((gross - net).toFixed(2));
+      }
+
       if (data.amount !== undefined) {
         fields.push(`amount = $${paramIndex++}`);
         values.push(data.amount);
@@ -451,6 +474,9 @@ export class ExpenseService {
       if (data.net_amount !== undefined) {
         fields.push(`net_amount = $${paramIndex++}`);
         values.push(data.net_amount);
+      } else if (derivedNetAmount !== undefined) {
+        fields.push(`net_amount = $${paramIndex++}`);
+        values.push(derivedNetAmount);
       }
 
       if (data.tax_rate !== undefined) {
@@ -461,6 +487,9 @@ export class ExpenseService {
       if (data.tax_amount !== undefined) {
         fields.push(`tax_amount = $${paramIndex++}`);
         values.push(data.tax_amount);
+      } else if (derivedTaxAmount !== undefined) {
+        fields.push(`tax_amount = $${paramIndex++}`);
+        values.push(derivedTaxAmount);
       }
 
       if (data.currency) {

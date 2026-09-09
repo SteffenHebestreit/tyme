@@ -214,7 +214,13 @@ export class AIDepreciationService {
             },
           ],
           temperature: 0.1,
-          max_tokens: 800,
+          // Reasoning models (Qwen3, gpt-oss, …) spend this budget on hidden
+          // reasoning before emitting a single token of answer. At 800 the
+          // budget was exhausted mid-thought on every attempt: content came
+          // back empty, all retries failed, and the service silently fell
+          // through to basicDepreciationRules() — so the AI analysis never
+          // actually ran on a reasoning model.
+          max_tokens: 12000,
         });
       } else if (this.provider === 'claude' || this.provider === 'anthropic') {
         // Claude/Anthropic API format

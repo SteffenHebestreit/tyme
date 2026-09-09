@@ -8,7 +8,9 @@ import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/common/Button';
 import { useUploadReceipt } from '@/hooks/api/useExpenses';
 import { analyzeReceipt } from '@/api/services/expense.service';
+import type { AnalyzedLineItem } from '@/api/services/expense.service';
 import { DepreciationSettings } from '@/components/business/expenses/DepreciationSettings';
+import { useAnalyzeDepreciationDraft } from '@/hooks/api/useDepreciation';
 import { Slot } from '@/plugins/slots';
 import { usePlugins } from '@/api/hooks/usePlugins';
 
@@ -35,6 +37,17 @@ export function AddExpenseModal({ isOpen, onClose, onExpenseAdded }: AddExpenseM
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisMessage, setAnalysisMessage] = useState<string | null>(null);
+  // Set once the receipt analysis succeeds, so the modal can offer the AfA
+  // analysis right away instead of making the user save and reopen the expense.
+  const [offerDepreciationAnalysis, setOfferDepreciationAnalysis] = useState(false);
+  const [depreciationMessage, setDepreciationMessage] = useState<string | null>(null);
+  // Positions of a bundled invoice. Non-empty only when the receipt covers
+  // several distinct articles, which have to be booked separately: the GWG
+  // limit and the AfA useful life both apply per article, not per invoice.
+  const [lineItems, setLineItems] = useState<AnalyzedLineItem[]>([]);
+  const [selectedLineItems, setSelectedLineItems] = useState<boolean[]>([]);
+  const [splitProgress, setSplitProgress] = useState<string | null>(null);
+  const [isSplitting, setIsSplitting] = useState(false);
   
   // Recurring expense fields
   const [isRecurring, setIsRecurring] = useState(false);
@@ -45,7 +58,7 @@ export function AddExpenseModal({ isOpen, onClose, onExpenseAdded }: AddExpenseM
   // Depreciation fields
   const [depreciationType, setDepreciationType] = useState<'none' | 'immediate' | 'partial' | null>('none');
   const [depreciationYears, setDepreciationYears] = useState<number | null>(null);
-  const [depreciationMethod, setDepreciationMethod] = useState<'linear' | 'declining' | null>('linear');
+  const [depreciationMethod, setDepreciationMethod] = useState<'linear' | 'degressive' | null>('linear');
   const [depreciationCategory, setDepreciationCategory] = useState<string | null>(null);
 
   // Calculate tax breakdown
@@ -57,6 +70,7 @@ export function AddExpenseModal({ isOpen, onClose, onExpenseAdded }: AddExpenseM
 
   const createExpense = useCreateExpense();
   const uploadReceipt = useUploadReceipt();
+  const analyzeDepreciationDraft = useAnalyzeDepreciationDraft();
   const { data: projects = [] } = useProjects();
 
   useEffect(() => {
@@ -73,6 +87,13 @@ export function AddExpenseModal({ isOpen, onClose, onExpenseAdded }: AddExpenseM
       setNotes('');
       setCurrency('EUR');
       setReceiptFile(null);
+      setAnalysisMessage(null);
+      setOfferDepreciationAnalysis(false);
+      setDepreciationMessage(null);
+      setLineItems([]);
+      setSelectedLineItems([]);
+      setSplitProgress(null);
+      setIsSplitting(false);
       setIsRecurring(false);
       setRecurrenceFrequency('monthly');
       setRecurrenceStartDate(new Date().toISOString().split('T')[0]);
@@ -151,8 +172,10 @@ export function AddExpenseModal({ isOpen, onClose, onExpenseAdded }: AddExpenseM
       return;
     }
 
-    if (!receiptFile.type.includes('pdf')) {
-      setAnalysisMessage('Only PDF files can be analyzed');
+    if (!isAnalysable(receiptFile)) {
+      setAnalysisMessage(
+        t('ai.unsupportedType', 'Only PDFs and images (JPEG, PNG, WebP) can be analyzed')
+      );
       return;
     }
 
@@ -163,19 +186,51 @@ export function AddExpenseModal({ isOpen, onClose, onExpenseAdded }: AddExpenseM
       const result = await analyzeReceipt(receiptFile);
 
       if (result.success && result.data) {
-        // Pre-fill form with extracted data
-        if (result.data.amount) setAmount(result.data.amount.toString());
-        if (result.data.date) setExpenseDate(result.data.date);
-        if (result.data.vendor) setDescription(result.data.vendor);
-        if (result.data.category) setCategory(result.data.category);
-        if (result.data.description && !description) setNotes(result.data.description);
-        if (result.data.currency) setCurrency(result.data.currency);
-        if (result.data.tax_rate) setTaxRate((result.data.tax_rate * 100).toString());
+        const extracted = result.data;
+
+        // Pre-fill form with extracted data.
+        // `description` is the only field shown in the expense overview, so it has
+        // to carry what was actually bought. Vendor, seller and invoice number are
+        // supporting context and go to the notes instead.
+        if (extracted.amount) setAmount(extracted.amount.toString());
+        if (extracted.date) setExpenseDate(extracted.date);
+
+        const label = extracted.description?.trim() || extracted.vendor?.trim();
+        if (label) setDescription(label);
+
+        // Only accept a category the select can actually display.
+        if (extracted.category && categoryOptions.some((o) => o.value === extracted.category)) {
+          setCategory(extracted.category);
+        }
+
+        const context = [
+          extracted.vendor && `${t('ai.vendor', 'Vendor')}: ${extracted.vendor}`,
+          extracted.seller &&
+            extracted.seller !== extracted.vendor &&
+            `${t('ai.seller', 'Sold by')}: ${extracted.seller}`,
+          extracted.invoice_number &&
+            `${t('ai.invoiceNumber', 'Invoice no.')}: ${extracted.invoice_number}`,
+        ].filter(Boolean);
+        if (context.length) setNotes(context.join('\n'));
+
+        if (extracted.currency) setCurrency(extracted.currency);
+        if (extracted.tax_rate) setTaxRate((extracted.tax_rate * 100).toString());
 
         const confidence = result.data.confidence || 0;
         setAnalysisMessage(
           `✓ Analysis complete! Confidence: ${confidence}%. Please review and adjust the extracted data.`
         );
+        // A bundled invoice has to be booked per article, so offer the split
+        // instead of the single-expense AfA shortcut.
+        const items = extracted.line_items ?? [];
+        setLineItems(items);
+        setSelectedLineItems(items.map(() => true));
+        setSplitProgress(null);
+
+        // Everything the AfA analysis needs is now in the form, so offer it here
+        // rather than after a save/reopen round trip.
+        setDepreciationMessage(null);
+        setOfferDepreciationAnalysis(items.length === 0 && Boolean(label && extracted.amount));
       } else {
         setAnalysisMessage(result.message || 'Analysis failed. Please fill in the form manually.');
       }
@@ -184,6 +239,172 @@ export function AddExpenseModal({ isOpen, onClose, onExpenseAdded }: AddExpenseM
       setAnalysisMessage(`✗ Analysis failed: ${error.message || 'Unknown error'}`);
     } finally {
       setIsAnalyzing(false);
+    }
+  };
+
+  /**
+   * Run the AfA analysis on the values currently in the form.
+   *
+   * Uses the draft endpoint so no expense has to exist yet — the recommendation
+   * is applied to the depreciation fields and saved together with everything
+   * else when the user submits.
+   */
+  const handleAnalyzeDepreciation = async () => {
+    const parsedAmount = parseFloat(amount);
+    if (!description.trim() || !Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+      setDepreciationMessage(
+        t('ai.depreciationNeedsData', 'Please fill in a description and amount first.')
+      );
+      return;
+    }
+
+    setDepreciationMessage(null);
+
+    try {
+      const result = await analyzeDepreciationDraft.mutateAsync({
+        description,
+        notes,
+        category,
+        amount: parsedAmount,
+        net_amount: parseFloat(netAmount.toFixed(2)),
+        tax_amount: parseFloat(taxAmount.toFixed(2)),
+        tax_rate: parseFloat(taxRate) / 100,
+        expense_date: expenseDate,
+      });
+
+      const analysis = result.analysis;
+      if (!analysis) {
+        setDepreciationMessage(
+          result.reason || t('ai.depreciationNoResult', 'No depreciation recommendation returned.')
+        );
+        return;
+      }
+
+      setDepreciationType(analysis.depreciation_type);
+      setDepreciationYears(analysis.depreciation_years ?? null);
+      setDepreciationCategory(analysis.useful_life_category ?? null);
+
+      // The AfA analysis reasons about the asset itself and often lands on a
+      // better category than the receipt extraction did.
+      if (
+        analysis.suggested_category &&
+        categoryOptions.some((o) => o.value === analysis.suggested_category)
+      ) {
+        setCategory(analysis.suggested_category);
+      }
+
+      setOfferDepreciationAnalysis(false);
+      setDepreciationMessage(
+        `✓ ${t('ai.depreciationDone', 'Depreciation analysis complete')} (${analysis.confidence}%): ${analysis.reasoning}`
+      );
+    } catch (error: any) {
+      console.error('Failed to analyze depreciation:', error);
+      setDepreciationMessage(
+        `✗ ${t('ai.depreciationFailed', 'Depreciation analysis failed')}: ${
+          error?.response?.data?.message || error?.message || 'Unknown error'
+        }`
+      );
+    }
+  };
+
+  /**
+   * Whether a receipt can be sent to the AI analysis.
+   *
+   * The MCP server reads photographed and scanned receipts as well as PDFs, so
+   * images qualify too. Mirrors ANALYSABLE_TYPES in expense-receipt.controller.
+   */
+  const isAnalysable = (file: File) =>
+    file.type === 'application/pdf' || /^image\/(jpeg|jpg|png|webp)$/.test(file.type);
+
+  /** Gross total of the positions the user has ticked. */
+  const selectedLineItemTotal = lineItems.reduce(
+    (sum, item, index) => (selectedLineItems[index] ? sum + item.amount : sum),
+    0
+  );
+  const selectedLineItemCount = selectedLineItems.filter(Boolean).length;
+  // The extraction is told the positions must add up to the invoice total, but
+  // it is still a language model — show the user when they do not.
+  const lineItemsReconcile =
+    lineItems.length > 0 &&
+    Math.abs(lineItems.reduce((sum, i) => sum + i.amount, 0) - (parseFloat(amount) || 0)) < 0.02;
+
+  const toggleLineItem = (index: number) => {
+    setSelectedLineItems((prev) => prev.map((v, i) => (i === index ? !v : v)));
+  };
+
+  /**
+   * Book one expense per ticked invoice position.
+   *
+   * Each position becomes its own expense so it gets its own GWG/AfA treatment,
+   * and the receipt PDF is attached to every one of them so each row carries its
+   * own proof. Runs sequentially — a partial failure reports how far it got
+   * rather than silently leaving a half-booked invoice behind.
+   */
+  const handleCreateSplitExpenses = async () => {
+    const chosen = lineItems.filter((_, index) => selectedLineItems[index]);
+    if (chosen.length === 0) return;
+
+    setIsSplitting(true);
+    setSplitProgress(null);
+
+    let created = 0;
+    try {
+      for (const item of chosen) {
+        setSplitProgress(
+          t('ai.splitProgress', 'Creating expense {{current}} of {{total}}...', {
+            current: created + 1,
+            total: chosen.length,
+          })
+        );
+
+        const itemTaxRate = item.tax_rate ?? (parseFloat(taxRate) / 100 || 0);
+        const itemNet = item.amount / (1 + itemTaxRate);
+        const quantity = item.quantity && item.quantity > 1 ? item.quantity : 1;
+
+        const itemNotes = [
+          notes,
+          quantity > 1 && item.unit_amount
+            ? `${quantity} x ${item.unit_amount.toFixed(2)} ${currency}`
+            : null,
+        ]
+          .filter(Boolean)
+          .join('\n');
+
+        const newExpense = await createExpense.mutateAsync({
+          description: quantity > 1 ? `${quantity}x ${item.description}` : item.description,
+          amount: item.amount,
+          net_amount: parseFloat(itemNet.toFixed(2)),
+          tax_rate: itemTaxRate,
+          tax_amount: parseFloat((item.amount - itemNet).toFixed(2)),
+          category: (item.category || category) as ExpenseCategory,
+          expense_date: expenseDate,
+          project_id: projectId || null,
+          is_billable: isBillable,
+          is_reimbursable: isReimbursable,
+          notes: itemNotes || null,
+          currency,
+        } as any);
+
+        // Attach the receipt to every expense so each one stands on its own.
+        if (receiptFile && newExpense.id) {
+          await uploadReceipt.mutateAsync({ expenseId: newExpense.id, file: receiptFile });
+        }
+        created += 1;
+      }
+
+      onExpenseAdded();
+      onClose();
+    } catch (error: any) {
+      console.error('Failed to create split expenses:', error);
+      setSplitProgress(
+        `✗ ${t('ai.splitFailed', 'Created {{created}} of {{total}} expenses, then failed', {
+          created,
+          total: chosen.length,
+        })}: ${error?.response?.data?.message || error?.message || 'Unknown error'}`
+      );
+      if (created > 0) onExpenseAdded();
+    } finally {
+      setIsSplitting(false);
     }
   };
 
@@ -496,7 +717,7 @@ export function AddExpenseModal({ isOpen, onClose, onExpenseAdded }: AddExpenseM
                                 dark:hover:file:bg-purple-900/50
                                 cursor-pointer"
                     />
-                    {receiptFile && receiptFile.type.includes('pdf') && aiAddonEnabled && (
+                    {receiptFile && isAnalysable(receiptFile) && aiAddonEnabled && (
                       <button
                         type="button"
                         onClick={handleAnalyzeReceipt}
@@ -520,7 +741,7 @@ export function AddExpenseModal({ isOpen, onClose, onExpenseAdded }: AddExpenseM
                             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
                             </svg>
-                            🤖 Analyze Receipt with AI
+                            🤖 {t('ai.analyzeReceipt', 'Analyze Receipt with AI')}
                           </>
                         )}
                       </button>
@@ -528,6 +749,127 @@ export function AddExpenseModal({ isOpen, onClose, onExpenseAdded }: AddExpenseM
                     {analysisMessage && (
                       <p className={`text-sm ${analysisMessage.startsWith('✓') ? 'text-green-600 dark:text-green-400' : 'text-orange-600 dark:text-orange-400'}`}>
                         {analysisMessage}
+                      </p>
+                    )}
+                    {lineItems.length > 0 && (
+                      <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 p-3 space-y-3">
+                        <div>
+                          <p className="text-sm font-medium text-blue-900 dark:text-blue-100">
+                            {t('ai.splitTitle', 'This invoice contains {{count}} positions', {
+                              count: lineItems.length,
+                            })}
+                          </p>
+                          <p className="text-xs text-blue-800 dark:text-blue-200 mt-1">
+                            {t(
+                              'ai.splitHint',
+                              'The 800 EUR GWG limit and the depreciation period apply per article, not per invoice. Book them separately to get the tax treatment right.'
+                            )}
+                          </p>
+                        </div>
+
+                        <div className="space-y-1">
+                          {lineItems.map((item, index) => (
+                            <label
+                              key={`${item.description}-${index}`}
+                              className="flex items-start gap-2 text-sm text-gray-800 dark:text-gray-100 cursor-pointer"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={selectedLineItems[index] ?? false}
+                                onChange={() => toggleLineItem(index)}
+                                disabled={isSplitting}
+                                className="mt-1 rounded border-gray-300 dark:border-gray-600 text-purple-600 focus:ring-purple-500"
+                              />
+                              <span className="flex-1">
+                                {item.quantity && item.quantity > 1 ? `${item.quantity}x ` : ''}
+                                {item.description}
+                                <span className="text-xs text-gray-500 dark:text-gray-400">
+                                  {' '}— {item.amount.toFixed(2)} {currency}
+                                  {item.category ? ` · ${item.category}` : ''}
+                                </span>
+                              </span>
+                            </label>
+                          ))}
+                        </div>
+
+                        <p className="text-xs text-gray-600 dark:text-gray-300">
+                          {t('ai.splitSelected', 'Selected')}: {selectedLineItemTotal.toFixed(2)} {currency}
+                          {' · '}
+                          {lineItemsReconcile
+                            ? t('ai.splitReconciles', 'positions match the invoice total')
+                            : t(
+                                'ai.splitMismatch',
+                                'positions do NOT add up to the invoice total — check them'
+                              )}
+                        </p>
+
+                        <div className="flex items-center gap-2">
+                          <Button
+                            type="button"
+                            variant="primary"
+                            onClick={handleCreateSplitExpenses}
+                            disabled={isSplitting || selectedLineItemCount === 0}
+                          >
+                            {isSplitting
+                              ? t('ai.splitRunning', 'Creating...')
+                              : t('ai.splitCreate', 'Create {{count}} expenses', {
+                                  count: selectedLineItemCount,
+                                })}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => {
+                              setLineItems([]);
+                              setSelectedLineItems([]);
+                              setOfferDepreciationAnalysis(Boolean(description && amount));
+                            }}
+                            disabled={isSplitting}
+                          >
+                            {t('ai.splitCombined', 'Keep as one expense')}
+                          </Button>
+                        </div>
+
+                        {splitProgress && (
+                          <p className={`text-sm ${splitProgress.startsWith('✗') ? 'text-red-600 dark:text-red-400' : 'text-blue-800 dark:text-blue-200'}`}>
+                            {splitProgress}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                    {offerDepreciationAnalysis && aiAddonEnabled && (
+                      <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 p-3 space-y-2">
+                        <p className="text-sm text-amber-900 dark:text-amber-100">
+                          {t(
+                            'ai.depreciationPrompt',
+                            'Analyze depreciation (AfA) for this expense now as well?'
+                          )}
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            type="button"
+                            variant="primary"
+                            onClick={handleAnalyzeDepreciation}
+                            disabled={analyzeDepreciationDraft.isPending}
+                          >
+                            {analyzeDepreciationDraft.isPending
+                              ? t('ai.depreciationRunning', 'Analyzing depreciation...')
+                              : t('ai.depreciationYes', 'Yes, analyze now')}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => setOfferDepreciationAnalysis(false)}
+                            disabled={analyzeDepreciationDraft.isPending}
+                          >
+                            {t('ai.depreciationNo', 'Skip')}
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                    {depreciationMessage && (
+                      <p className={`text-sm ${depreciationMessage.startsWith('✓') ? 'text-green-600 dark:text-green-400' : 'text-orange-600 dark:text-orange-400'}`}>
+                        {depreciationMessage}
                       </p>
                     )}
                     {receiptFile && (

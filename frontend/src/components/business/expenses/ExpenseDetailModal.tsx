@@ -133,9 +133,14 @@ export function ExpenseDetailModal({
       setIsEditing(false);
       setEditedExpense(null);
       onExpenseUpdated();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to update expense:', error);
-      alert('Failed to update expense. Please try again.');
+      const reason =
+        error?.response?.data?.message ||
+        error?.response?.data?.error ||
+        error?.message ||
+        'Unknown error';
+      alert(`Failed to update expense: ${reason}`);
     }
   };
 

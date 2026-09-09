@@ -108,6 +108,25 @@ export const uploadReceipt = async (
  * @param {File} file - Receipt PDF file to analyze
  * @returns {Promise<AnalyzedReceiptData>} Extracted expense data
  */
+/**
+ * A single position of an analysed invoice.
+ *
+ * Populated with 2+ entries only when the invoice bundles distinct articles;
+ * the modal then offers to book one expense per position, because the GWG
+ * threshold and the AfA useful life both apply per article, not per invoice.
+ */
+export interface AnalyzedLineItem {
+  description: string;
+  quantity?: number;
+  /** Gross price of a single unit. */
+  unit_amount?: number;
+  /** Gross total for this position. */
+  amount: number;
+  category?: string;
+  /** Decimal, e.g. 0.19 for 19%. */
+  tax_rate?: number;
+}
+
 export interface AnalyzedReceiptData {
   success: boolean;
   data?: {
@@ -115,10 +134,15 @@ export interface AnalyzedReceiptData {
     currency?: string;
     date?: string;
     vendor?: string;
+    /** Third-party seller on marketplace invoices ("Verkauft von" / "Sold by"). */
+    seller?: string;
+    invoice_number?: string;
     category?: string;
+    /** What was bought — the line shown in the expense overview, never a company name. */
     description?: string;
     tax_amount?: number;
     tax_rate?: number;
+    line_items?: AnalyzedLineItem[];
     confidence?: number;
     raw_text?: string;
   };

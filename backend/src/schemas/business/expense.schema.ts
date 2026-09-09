@@ -194,3 +194,23 @@ export const expenseSummarySchema = Joi.object({
   group_by: Joi.string().valid('category', 'project', 'month').default('category'),
   search: Joi.string().max(255).optional(),
 });
+
+/**
+ * Schema for analysing an unsaved (draft) expense for depreciation.
+ *
+ * Mirrors the fields AIDepreciationService.analyzeExpense needs, so the Add
+ * Expense modal can run the AfA analysis on the values currently in the form —
+ * before the expense exists in the database.
+ */
+export const analyzeDepreciationDraftSchema = Joi.object({
+  description: Joi.string().min(1).max(1000).required(),
+  notes: Joi.string().max(5000).optional().allow('', null),
+  category: Joi.string().max(50).required(),
+  amount: Joi.number().positive().max(999999.99).required(),
+  net_amount: Joi.number().min(0).max(999999.99).required(),
+  tax_amount: Joi.number().min(0).max(999999.99).default(0),
+  tax_rate: Joi.number().min(0).max(1).default(0),
+  expense_date: Joi.string().pattern(/^\d{4}-\d{2}-\d{2}$/).required().messages({
+    'string.pattern.base': 'Date must be in YYYY-MM-DD format',
+  }),
+});

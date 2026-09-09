@@ -7,6 +7,7 @@
 import { Request, Response } from 'express';
 import { ExpenseService } from '../../../services/business/expense.service';
 import { AIDepreciationService } from '../../../services/financial/ai-depreciation.service';
+import { analyzeDepreciationDraftSchema } from '../../../schemas/business/expense.schema';
 import { logger } from '../../../utils/logger';
 
 export class ExpenseDepreciationController {
@@ -72,41 +73,7 @@ export class ExpenseDepreciationController {
       // DON'T save to database - let user decide to accept or reject
       // Only save when user explicitly clicks "Accept Recommendation"
 
-      // Map old/deprecated category names to new ones
-      const categoryMapping: { [key: string]: string } = {
-        'hardware': 'computer', // Old "hardware" → new "computer"
-        'office_supply': 'office_supplies',
-        'professional_service': 'professional_services',
-        'telecommunication': 'telecommunications',
-        'vehicle': 'vehicle_car',
-      };
-
-      const suggestedCategory = analysis.suggested_category
-        ? (categoryMapping[analysis.suggested_category] || analysis.suggested_category)
-        : expense.category;
-
-      // Transform AI response to match frontend interface
-      const formattedResponse = {
-        eligible: true,
-        analysis: {
-          recommendation: analysis.recommendation,
-          depreciation_type: analysis.recommendation,
-          depreciation_years: analysis.suggested_years || null,
-          useful_life_category: suggestedCategory || 'other', // Use suggested category as asset category
-          suggested_category: suggestedCategory,
-          category_reasoning: analysis.category_reasoning,
-          confidence: analysis.confidence,
-          reasoning: analysis.reasoning,
-          tax_impact: {
-            first_year_deduction: analysis.tax_deductible_amount,
-            deferred_amount: netAmount - analysis.tax_deductible_amount,
-          },
-          tax_deductible_percentage: analysis.tax_deductible_percentage,
-          tax_deductibility_reasoning: analysis.tax_deductibility_reasoning,
-          references: analysis.references,
-          sources: analysis.sources || [], // Include web search sources
-        },
-      };
+      const formattedResponse = this.formatAnalysis(analysis, netAmount, expense.category);
 
       // Save the AI analysis response to database so it can be displayed when reopening the expense
       logger.info(`[Depreciation] Saving AI analysis response for expense ${id}`);
@@ -128,6 +95,103 @@ export class ExpenseDepreciationController {
         }
       }
 
+      res.status(500).json({ error: 'Internal server error', message: error.message });
+    }
+  };
+
+  /**
+   * Shape an AIDepreciationService result into the response the frontend's
+   * DepreciationAnalysis interface expects. Shared by the saved-expense and
+   * draft endpoints so the two can never drift apart.
+   */
+  private formatAnalysis(analysis: any, netAmount: number, fallbackCategory?: string) {
+    // Map old/deprecated category names to new ones
+    const categoryMapping: { [key: string]: string } = {
+      'hardware': 'computer', // Old "hardware" → new "computer"
+      'office_supply': 'office_supplies',
+      'professional_service': 'professional_services',
+      'telecommunication': 'telecommunications',
+      'vehicle': 'vehicle_car',
+    };
+
+    const suggestedCategory = analysis.suggested_category
+      ? (categoryMapping[analysis.suggested_category] || analysis.suggested_category)
+      : fallbackCategory;
+
+    // Transform AI response to match frontend interface
+    return {
+      eligible: true,
+      analysis: {
+        recommendation: analysis.recommendation,
+        depreciation_type: analysis.recommendation,
+        depreciation_years: analysis.suggested_years || null,
+        useful_life_category: suggestedCategory || 'other', // Use suggested category as asset category
+        suggested_category: suggestedCategory,
+        category_reasoning: analysis.category_reasoning,
+        confidence: analysis.confidence,
+        reasoning: analysis.reasoning,
+        tax_impact: {
+          first_year_deduction: analysis.tax_deductible_amount,
+          deferred_amount: netAmount - analysis.tax_deductible_amount,
+        },
+        tax_deductible_percentage: analysis.tax_deductible_percentage,
+        tax_deductibility_reasoning: analysis.tax_deductibility_reasoning,
+        references: analysis.references,
+        sources: analysis.sources || [], // Include web search sources
+      },
+    };
+  }
+
+  /**
+   * Analyze an unsaved expense for depreciation using AI
+   * POST /api/expenses/analyze-depreciation/draft
+   *
+   * Same analysis as POST /:id/analyze-depreciation, but driven by the values
+   * currently in the Add Expense form rather than a stored row. This is what
+   * lets the modal offer the AfA analysis directly after the receipt analysis,
+   * instead of forcing a save / reopen / analyze round trip. Nothing is
+   * persisted — the caller applies the recommendation to the form and saves once.
+   */
+  analyzeDepreciationDraft = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+
+      const { error: validationError, value } = analyzeDepreciationDraftSchema.validate(req.body);
+      if (validationError) {
+        res.status(400).json({ error: 'Validation error', details: validationError.details });
+        return;
+      }
+
+      logger.info(
+        `[Depreciation] Analyzing draft expense "${value.description}" for user ${userId}`
+      );
+
+      // Per-request instance — the service holds per-user client/model state.
+      const aiDepreciationService = new AIDepreciationService();
+      await aiDepreciationService.initialize(userId);
+
+      const analysis = await aiDepreciationService.analyzeExpense({
+        id: 'draft',
+        description: value.description,
+        notes: value.notes || '',
+        category: value.category,
+        amount: value.amount,
+        net_amount: value.net_amount,
+        tax_amount: value.tax_amount,
+        tax_rate: value.tax_rate,
+        expense_date: value.expense_date,
+      });
+
+      res.status(200).json(this.formatAnalysis(analysis, value.net_amount, value.category));
+    } catch (error: any) {
+      logger.error('[Depreciation] Draft analysis error:', {
+        message: error?.message,
+        stack: error?.stack,
+      });
       res.status(500).json({ error: 'Internal server error', message: error.message });
     }
   };
