@@ -37,6 +37,45 @@
 - Deleting a client now removes its stored document files first; the cascade would otherwise
   have stranded them in object storage forever, with no garbage collection anywhere.
 
+### Fixes found while reviewing and testing the above
+- **A signed document could be superseded twice.** Uploading a new version locked
+  the document being replaced and derived the new version number from it — but
+  nothing ever writes that number, so the lock protected nothing and two
+  simultaneous uploads both became "version 2", one of them then hidden in the
+  list. Being replaced is a question with one answer, so that is now enforced by
+  the database; the second upload is refused with a message naming the version
+  that won.
+- **A deleted rate period came back.** The startup backfill decided "has this
+  already run?" by asking whether the project had any rate history, so deleting a
+  project's last period made the next restart re-create it. Migrations now record
+  that they ran.
+- **Setting an hourly rate to 0 silently cleared it**, and an entry with no rate
+  is billed at the project's current rate — so writing off an hour could quietly
+  re-price it later.
+- **Creating a project through the UI never opened its rate timeline** (a date
+  conversion produced an invalid value that was swallowed), so the first rate
+  added afterwards applied to all earlier work as well.
+- **Logging time with seconds in the start time returned a server error.** The API
+  accepted `HH:MM:SS` and then built an invalid timestamp from it; only `HH:MM`
+  worked. Pre-existing, and not reachable from the app's own forms.
+- Invoices no longer show a phantom 0,00 line for a running timer, and a rate
+  shown in a line description is now formatted as currency.
+- Client deletion removes its document files only after the client is actually
+  gone. Deleting them first destroyed every contract of a client that could not
+  be deleted (any client that has ever been invoiced), with no way to get them
+  back.
+
+### Build and tooling
+- **CI had not run since June.** The repository only permitted actions defined
+  inside itself, so every workflow failed to start before executing a single
+  step — including the v1.4.0 and v1.4.1 releases. GitHub-authored actions are
+  now allowed, and the workflow can be triggered manually.
+- The frontend lint gate ran with `--max-warnings 0` against a 168-warning
+  backlog while the workflow documented the opposite. It is now a ratchet at 175:
+  errors fail, the backlog does not block, and the count cannot grow unnoticed.
+- `npm test` in the backend test container silently tested a stale copy of the
+  source; the image bakes it in and mounts only the coverage directory.
+
 ### Security — multi-tenant isolation
 - `ClientService.findById`, `update` and `delete` carried no `user_id` filter, so a client id
   from a request reached another tenant's data. All three are now scoped, and every new rate

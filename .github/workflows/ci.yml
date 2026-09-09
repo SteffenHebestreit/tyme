@@ -4,11 +4,17 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch: # so a run can be triggered without a dummy commit
 
 # Notes:
-# - Required gates (must pass): backend type-check, backend + frontend lint
-#   (error-free as of 2026-07; warnings don't fail), frontend type-check,
-#   frontend build, frontend unit tests.
+# - Required gates (must pass): backend type-check, backend + frontend lint,
+#   frontend type-check, frontend build, frontend unit tests.
+# - Lint policy: errors always fail. Warnings are capped by a RATCHET —
+#   frontend `npm run lint` runs with --max-warnings 175 against a current count
+#   of 168, so the number cannot grow unnoticed but the existing backlog does not
+#   block the build. Lower the cap as the backlog is worked down; never raise it.
+#   (It was --max-warnings 0, which contradicted this note and would have failed
+#   the build on the pre-existing backlog the moment CI could run at all.)
 # - Non-blocking gate (continue-on-error): backend tests — promote once the
 #   postgres service-container setup is validated in a real CI run.
 
