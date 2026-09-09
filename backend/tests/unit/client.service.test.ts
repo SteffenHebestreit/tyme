@@ -1,6 +1,19 @@
 import { ClientService } from '../../src/services/business/client.service';
 import { CreateClientDto } from '../../src/models/business/client.model';
 import { TEST_USER_ID } from '../setup';
+import { getDbClient } from '../../src/utils/database';
+
+const deleteFileFromPath = jest.fn();
+jest.mock('../../src/services/storage/storage.service', () => ({
+  storageService: {
+    deleteFileFromPath: (...args: any[]) => deleteFileFromPath(...args),
+  },
+}));
+
+beforeEach(() => {
+  deleteFileFromPath.mockReset();
+  deleteFileFromPath.mockResolvedValue(undefined);
+});
 
 describe('ClientService', () => {
   let clientService: ClientService;
@@ -46,13 +59,13 @@ describe('ClientService', () => {
   describe('findById', () => {
     it('should return a client if found', async () => {
       const newClient = await clientService.create({ user_id: TEST_USER_ID, name: 'Find Me' });
-      const foundClient = await clientService.findById(newClient.id);
+      const foundClient = await clientService.findById(newClient.id, TEST_USER_ID);
       expect(foundClient).toBeDefined();
       expect(foundClient?.id).toBe(newClient.id);
     });
 
     it('should return null if client not found', async () => {
-      const foundClient = await clientService.findById('00000000-0000-0000-0000-000000000000');
+      const foundClient = await clientService.findById('00000000-0000-0000-0000-000000000000', TEST_USER_ID);
       expect(foundClient).toBeNull();
     });
   });
@@ -61,7 +74,7 @@ describe('ClientService', () => {
     it('should update a client', async () => {
       const newClient = await clientService.create({ user_id: TEST_USER_ID, name: 'To Be Updated' });
       const updatedData = { name: 'Updated Client', status: 'inactive' as const };
-      const updatedClient = await clientService.update(newClient.id, updatedData);
+      const updatedClient = await clientService.update(newClient.id, TEST_USER_ID, updatedData);
 
       expect(updatedClient).toBeDefined();
       expect(updatedClient?.name).toBe('Updated Client');
@@ -72,15 +85,15 @@ describe('ClientService', () => {
   describe('delete', () => {
     it('should delete a client and return true', async () => {
       const newClient = await clientService.create({ user_id: TEST_USER_ID, name: 'To Be Deleted' });
-      const result = await clientService.delete(newClient.id);
+      const result = await clientService.delete(newClient.id, TEST_USER_ID);
       expect(result).toBe(true);
 
-      const foundClient = await clientService.findById(newClient.id);
+      const foundClient = await clientService.findById(newClient.id, TEST_USER_ID);
       expect(foundClient).toBeNull();
     });
 
     it('should return false if client to delete is not found', async () => {
-      const result = await clientService.delete('00000000-0000-0000-0000-000000000000');
+      const result = await clientService.delete('00000000-0000-0000-0000-000000000000', TEST_USER_ID);
       expect(result).toBe(false);
     });
   });
@@ -191,7 +204,7 @@ describe('ClientService', () => {
         email: 'old@email.com',
       });
 
-      const updated = await clientService.update(newClient.id, {
+      const updated = await clientService.update(newClient.id, TEST_USER_ID, {
         email: 'new@email.com',
       });
 
@@ -204,7 +217,7 @@ describe('ClientService', () => {
         name: 'Phone Update Client',
       });
 
-      const updated = await clientService.update(newClient.id, {
+      const updated = await clientService.update(newClient.id, TEST_USER_ID, {
         phone: '+1-555-9999',
       });
 
@@ -217,7 +230,7 @@ describe('ClientService', () => {
         name: 'Address Update Client',
       });
 
-      const updated = await clientService.update(newClient.id, {
+      const updated = await clientService.update(newClient.id, TEST_USER_ID, {
         address: '789 New Address Ave',
       });
 
@@ -230,7 +243,7 @@ describe('ClientService', () => {
         name: 'Notes Update Client',
       });
 
-      const updated = await clientService.update(newClient.id, {
+      const updated = await clientService.update(newClient.id, TEST_USER_ID, {
         notes: 'Important client notes',
       });
 
@@ -243,7 +256,7 @@ describe('ClientService', () => {
         name: 'Billing Update Client',
       });
 
-      const updated = await clientService.update(newClient.id, {
+      const updated = await clientService.update(newClient.id, TEST_USER_ID, {
         use_separate_billing_address: true,
         billing_contact_person: 'Billing Person',
         billing_email: 'billing@update.com',
@@ -265,7 +278,7 @@ describe('ClientService', () => {
     });
 
     it('should return null when updating non-existent client', async () => {
-      const updated = await clientService.update('00000000-0000-0000-0000-000000000000', {
+      const updated = await clientService.update('00000000-0000-0000-0000-000000000000', TEST_USER_ID, {
         name: 'Does Not Exist',
       });
 
@@ -278,10 +291,78 @@ describe('ClientService', () => {
         name: 'No Change Client',
       });
 
-      const updated = await clientService.update(newClient.id, {});
+      const updated = await clientService.update(newClient.id, TEST_USER_ID, {});
 
       expect(updated?.id).toBe(newClient.id);
       expect(updated?.name).toBe('No Change Client');
+    });
+  });
+  describe('multi-tenant isolation', () => {
+    const OTHER_USER_ID = '99999999-9999-4999-8999-999999999999';
+
+    it('should not return another user client', async () => {
+      const newClient = await clientService.create({ user_id: TEST_USER_ID, name: 'Private Client' });
+
+      expect(await clientService.findById(newClient.id, OTHER_USER_ID)).toBeNull();
+    });
+
+    it('should not update another user client', async () => {
+      const newClient = await clientService.create({ user_id: TEST_USER_ID, name: 'Private Client' });
+
+      const updated = await clientService.update(newClient.id, OTHER_USER_ID, { name: 'Hijacked' });
+
+      expect(updated).toBeNull();
+      expect((await clientService.findById(newClient.id, TEST_USER_ID))?.name).toBe('Private Client');
+    });
+
+    it('should not delete another user client', async () => {
+      const newClient = await clientService.create({ user_id: TEST_USER_ID, name: 'Private Client' });
+
+      expect(await clientService.delete(newClient.id, OTHER_USER_ID)).toBe(false);
+      expect(await clientService.findById(newClient.id, TEST_USER_ID)).not.toBeNull();
+    });
+  });
+  describe('deleting a client cleans up its document files', () => {
+    it('removes the stored files after the client row is gone', async () => {
+      const newClient = await clientService.create({ user_id: TEST_USER_ID, name: 'Client With Docs' });
+      const db = getDbClient();
+
+      await db.query(
+        `CREATE TABLE IF NOT EXISTS client_documents (
+           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+           user_id UUID NOT NULL,
+           client_id UUID NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+           project_id UUID REFERENCES projects(id) ON DELETE SET NULL,
+           title VARCHAR(255) NOT NULL,
+           document_type VARCHAR(50) NOT NULL DEFAULT 'contract',
+           file_url TEXT, file_filename VARCHAR(255), file_size INTEGER, file_mimetype VARCHAR(100),
+           version INTEGER NOT NULL DEFAULT 1,
+           supersedes_document_id UUID REFERENCES client_documents(id) ON DELETE SET NULL,
+           signed_at DATE, valid_from DATE, valid_until DATE, notes TEXT,
+           created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+           updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+         )`
+      );
+      await db.query(
+        `INSERT INTO client_documents (user_id, client_id, title, file_url)
+         VALUES ($1, $2, 'Rahmenvertrag', '/bucket/documents/clients/x/1-contract.pdf')`,
+        [TEST_USER_ID, newClient.id]
+      );
+
+      const deleted = await clientService.delete(newClient.id, TEST_USER_ID);
+
+      expect(deleted).toBe(true);
+      expect(deleteFileFromPath).toHaveBeenCalledWith('/bucket/documents/clients/x/1-contract.pdf');
+    });
+
+    it('keeps the files when the client is not the caller\'s', async () => {
+      const newClient = await clientService.create({ user_id: TEST_USER_ID, name: 'Foreign Client' });
+
+      const deleted = await clientService.delete(newClient.id, '99999999-9999-4999-8999-999999999999');
+
+      expect(deleted).toBe(false);
+      // The row survived, so nothing may have been removed from storage.
+      expect(deleteFileFromPath).not.toHaveBeenCalled();
     });
   });
 });

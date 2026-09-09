@@ -2,6 +2,49 @@
 
 ## Unreleased (since v1.4.1)
 
+### Projects — hourly rates that change over time
+- **Raising a rate no longer re-prices work you already logged.** A project's rate is now a
+  timeline (`project_rate_history`) rather than a single number: each row is the rate valid
+  from a date until the next one. Time entries capture the rate that applied on the day the
+  work happened, at the moment they are created, so agreeing a new rate for January leaves
+  December's hours — and any invoice built from them — exactly as they were.
+- You can schedule a rise in advance: a rate whose `valid_from` is in the future sits in the
+  timeline as "scheduled" and takes effect on its own date, with no further action.
+- `projects.hourly_rate` is kept as the rate effective *today*, so every existing screen and
+  report that shows a project's rate keeps working unchanged. It is derived from the timeline
+  now, not the source of truth.
+- **Migration**: existing databases are backfilled on the next backend start — one opening
+  rate row per project (reaching back to that project's earliest time entry, so no logged work
+  falls into a gap), then every time entry that never captured a rate is stamped with the rate
+  effective on its own date. Idempotent, and it deliberately leaves `updated_at` untouched so
+  years of history don't all look freshly edited.
+- The time entry form now fills in the rate effective on the *entry's* date rather than the
+  project's current rate — otherwise back-dating an entry after a rise would have billed it at
+  the new rate.
+- **Invoice fix**: generating an invoice from time entries grouped everything for a project
+  under whichever rate the query returned first (the oldest entry's), so every hour after a
+  rate change was mis-billed. Entries are now grouped by project *and* rate, with the rate
+  named in the line description when a project contributes more than one.
+
+### Clients — contracts and other signed documents
+- Store the documents signed with a customer: multiple per client, each optionally tied to one
+  of that client's projects, with title, type (contract, amendment, NDA, offer, order, terms),
+  signature date and validity period.
+- **Versioning**: uploading a replacement links it to the document it supersedes and keeps the
+  predecessor and its file intact and downloadable — a superseded contract is history, not
+  something to delete. Earlier versions are collapsed behind the current one in the UI.
+- PDFs, scans and photos (JPEG/PNG/WebP) and Word/ODT files up to 25 MB, enforced server-side.
+- Deleting a client now removes its stored document files first; the cascade would otherwise
+  have stranded them in object storage forever, with no garbage collection anywhere.
+
+### Security — multi-tenant isolation
+- `ClientService.findById`, `update` and `delete` carried no `user_id` filter, so a client id
+  from a request reached another tenant's data. All three are now scoped, and every new rate
+  and document query carries its tenant predicate inside the statement that reads or writes.
+- Starting a timer resolved the project through an unscoped lookup and stamped that project's
+  rate — another tenant's project id was enough. It now verifies ownership first.
+
+
 ## v1.4.1 (2026-08-12)
 
 ### Clients — billing fields

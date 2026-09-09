@@ -363,10 +363,193 @@ async function ensureSchemaUpgrades(): Promise<void> {
         WHERE is_active = true;
     `);
 
+    // Date-effective project hourly rates. Each row is the rate applying from
+    // valid_from until the next row's valid_from; time entries stamp their rate
+    // at creation, so editing a rate never re-prices already-logged work.
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS project_rate_history (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL,
+        project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        hourly_rate NUMERIC(10,2) NOT NULL CHECK (hourly_rate >= 0),
+        valid_from DATE NOT NULL,
+        note TEXT,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_project_rate_history_project_date
+        ON project_rate_history(project_id, valid_from);
+      CREATE INDEX IF NOT EXISTS idx_project_rate_history_user ON project_rate_history(user_id);
+      CREATE INDEX IF NOT EXISTS idx_project_rate_history_lookup
+        ON project_rate_history(project_id, valid_from DESC);
+    `);
+
+    // Signed client documents (contracts and similar). A new version points at
+    // the row it replaces; SET NULL so deleting one version never cascades the
+    // rest of the chain away.
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS client_documents (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL,
+        client_id UUID NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+        project_id UUID REFERENCES projects(id) ON DELETE SET NULL,
+        title VARCHAR(255) NOT NULL,
+        document_type VARCHAR(50) NOT NULL DEFAULT 'contract'
+          CHECK (document_type IN ('contract', 'amendment', 'nda', 'offer', 'order', 'invoice_terms', 'other')),
+        file_url TEXT,
+        file_filename VARCHAR(255),
+        file_size INTEGER,
+        file_mimetype VARCHAR(100),
+        version INTEGER NOT NULL DEFAULT 1,
+        supersedes_document_id UUID REFERENCES client_documents(id) ON DELETE SET NULL,
+        signed_at DATE,
+        valid_from DATE,
+        valid_until DATE,
+        notes TEXT,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_client_documents_user ON client_documents(user_id);
+      CREATE INDEX IF NOT EXISTS idx_client_documents_client
+        ON client_documents(client_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_client_documents_project
+        ON client_documents(project_id) WHERE project_id IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_client_documents_supersedes
+        ON client_documents(supersedes_document_id) WHERE supersedes_document_id IS NOT NULL;
+    `);
+
     logger.info('[Startup] ✓ Schema upgrades applied');
   } catch (error) {
     logger.error('[Startup] Error applying schema upgrades:', error);
     // Don't throw - startup should continue
+  }
+}
+
+/**
+ * Seed rate history and stamp historical time entries, once.
+ *
+ * Unlike {@link ensureSchemaUpgrades} this DOES modify data — deliberately, and
+ * it is the only place in startup that does. Both statements are guarded so
+ * re-running them on every boot is a no-op:
+ *
+ *  1. Every project with a rate but no history gets one opening row. valid_from
+ *     reaches back to the earliest time entry on that project, so no logged
+ *     entry can fall into a period with no rate.
+ *  2. Every time entry still carrying a NULL rate is stamped with the rate that
+ *     was effective on its own entry_date. After this, a rate change can never
+ *     re-price past work, because no money path has to fall back to the
+ *     project's current rate.
+ *
+ * time_entries has a BEFORE UPDATE trigger that overwrites updated_at
+ * (init.sql: set_timestamp). Backfilling would therefore make years of history
+ * look freshly edited, so the UPDATE runs with session_replication_role =
+ * replica, which suppresses triggers for this transaction only. That needs a
+ * dedicated connection — SET LOCAL on a pool is not scoped to later queries.
+ */
+async function backfillProjectRates(): Promise<void> {
+  const pool = getDbClient();
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    // 1) Opening rate row per project. LEAST ignores NULLs in Postgres, so a
+    // project with no time entries simply falls back to its own start date.
+    const seeded = await client.query(`
+      INSERT INTO project_rate_history (user_id, project_id, hourly_rate, valid_from, note)
+      SELECT p.user_id,
+             p.id,
+             p.hourly_rate,
+             COALESCE(
+               LEAST(p.start_date, (SELECT MIN(te.entry_date) FROM time_entries te WHERE te.project_id = p.id)),
+               p.start_date,
+               (SELECT MIN(te.entry_date) FROM time_entries te WHERE te.project_id = p.id),
+               p.created_at::date
+             ),
+             'Initial rate (migrated from project)'
+      FROM projects p
+      WHERE p.hourly_rate IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM project_rate_history h WHERE h.project_id = p.id)
+    `);
+
+    // 2) Stamp entries that never captured a rate. Entries without a project
+    // are skipped: every money path INNER JOINs projects, so they are already
+    // unreachable and there is no rate to resolve for them.
+    // Suppressing the BEFORE UPDATE trigger keeps years of updated_at history
+    // intact, but session_replication_role is superuser-only. On a role without
+    // it the SET raises, which would abort the transaction and roll the seed
+    // back — on every single boot. A savepoint makes it optional: if it fails we
+    // continue and accept the updated_at churn rather than losing the backfill.
+    let triggersSuppressed = true;
+    await client.query('SAVEPOINT before_trigger_suppression');
+    try {
+      await client.query(`SET LOCAL session_replication_role = replica`);
+    } catch (error) {
+      await client.query('ROLLBACK TO SAVEPOINT before_trigger_suppression');
+      triggersSuppressed = false;
+      logger.warn(
+        '[Startup] Could not suppress triggers for the rate backfill (needs a superuser role); ' +
+          'proceeding, but updated_at will be refreshed on backfilled time entries'
+      );
+    }
+
+    const stamped = await client.query(`
+      UPDATE time_entries te
+      SET hourly_rate = (
+        SELECT prh.hourly_rate
+        FROM project_rate_history prh
+        WHERE prh.project_id = te.project_id
+          AND prh.valid_from <= te.entry_date
+        ORDER BY prh.valid_from DESC
+        LIMIT 1
+      )
+      WHERE te.hourly_rate IS NULL
+        AND te.project_id IS NOT NULL
+        AND EXISTS (
+          SELECT 1
+          FROM project_rate_history prh
+          WHERE prh.project_id = te.project_id
+            AND prh.valid_from <= te.entry_date
+        )
+    `);
+
+    await client.query('COMMIT');
+
+    // A period scheduled for a date that has since arrived becomes the current
+    // rate here, so a restart never leaves the displayed rate behind.
+    const advanced = await client.query(`
+      UPDATE projects p
+      SET hourly_rate = derived.rate, updated_at = CURRENT_TIMESTAMP
+      FROM (
+        SELECT p2.id,
+               (SELECT h.hourly_rate FROM project_rate_history h
+                WHERE h.project_id = p2.id AND h.valid_from <= CURRENT_DATE
+                ORDER BY h.valid_from DESC LIMIT 1) AS rate
+        FROM projects p2
+      ) AS derived
+      WHERE p.id = derived.id
+        AND derived.rate IS NOT NULL
+        AND p.hourly_rate IS DISTINCT FROM derived.rate
+    `);
+
+    if (advanced.rowCount) {
+      logger.info(`[Startup] ✓ ${advanced.rowCount} project rate(s) advanced to a newly effective period`);
+    }
+
+    if (seeded.rowCount || stamped.rowCount) {
+      logger.info(
+        `[Startup] ✓ Rate backfill: ${seeded.rowCount} project rate(s) seeded, ${stamped.rowCount} time entr(ies) stamped` +
+          (triggersSuppressed ? '' : ' (updated_at refreshed — triggers could not be suppressed)')
+      );
+    }
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    logger.error('[Startup] Error backfilling project rates:', error);
+    // Don't throw - startup should continue
+  } finally {
+    client.release();
   }
 }
 
@@ -382,6 +565,9 @@ export async function runStartupInitialization(): Promise<void> {
 
     // Apply additive schema upgrades for newer features
     await ensureSchemaUpgrades();
+
+    // Seed rate history and stamp historical time entries (idempotent)
+    await backfillProjectRates();
 
     // Initialize users from Keycloak
     await initializeExistingUsers();

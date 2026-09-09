@@ -6,6 +6,7 @@ import BackupScheduler from './services/system/backup-scheduler.service';
 import recurringExpenseScheduler from './services/financial/recurring-expense-scheduler.service';
 import invoiceReminderScheduler from './services/financial/invoice-reminder-scheduler.service';
 import recurringInvoiceScheduler from './services/financial/recurring-invoice-scheduler.service';
+import projectRateScheduler from './services/business/project-rate-scheduler.service';
 import { mcpClient } from './services/mcp/mcp-client.service';
 import { initObservability, installProcessHandlers } from './utils/observability';
 import { registerCoreAiTools } from './services/ai/core-tools';
@@ -46,6 +47,15 @@ async function startServer() {
       logger.info('✅ Recurring expense scheduler initialized successfully');
     } catch (err: any) {
       logger.error('Failed to initialize recurring expense scheduler:', err);
+    }
+
+    // Initialize project rate scheduler (advances the denormalised current rate
+    // when a future-dated rate period takes effect)
+    try {
+      projectRateScheduler.initialize();
+      logger.info('✅ Project rate scheduler initialized successfully');
+    } catch (err: any) {
+      logger.error('Failed to initialize project rate scheduler:', err);
     }
 
     // Initialize invoice overdue reminder scheduler

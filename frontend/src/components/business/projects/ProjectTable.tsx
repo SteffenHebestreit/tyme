@@ -13,12 +13,14 @@ import { Table, Column } from '../../common/Table';
  * @interface ProjectTableProps
  * @property {Project[]} projects - Array of projects to display
  * @property {(project: Project) => void} onEdit - Callback when edit button is clicked
+ * @property {(project: Project) => void} onManageRates - Callback when the rate timeline button is clicked
  * @property {(project: Project) => void} onDelete - Callback when delete button is clicked
  * @property {string | null} [isDeletingId] - ID of project currently being deleted (shows loading state)
  */
 interface ProjectTableProps {
   projects: Project[];
   onEdit: (project: Project) => void;
+  onManageRates: (project: Project) => void;
   onDelete: (project: Project) => void;
   isDeletingId?: string | null;
 }
@@ -75,7 +77,7 @@ const formatCurrency = (value: number | null, currency: string = 'USD') => {
  * - Currency formatting for budget
  * - Date formatting (MMM d, yyyy)
  * - Hover effects on rows
- * - Edit and Delete action buttons
+ * - Edit, Rates (date-effective hourly rate timeline) and Delete action buttons
  * - Loading state for delete button (shows "Deleting..." when isDeletingId matches)
  * - Dark mode support
  * - Responsive horizontal scroll
@@ -88,6 +90,7 @@ const formatCurrency = (value: number | null, currency: string = 'USD') => {
  * <ProjectTable
  *   projects={filteredProjects}
  *   onEdit={handleEdit}
+ *   onManageRates={openRatesModal}
  *   onDelete={handleDelete}
  *   isDeletingId={deletingProjectId}
  * />
@@ -95,7 +98,7 @@ const formatCurrency = (value: number | null, currency: string = 'USD') => {
  * @param {ProjectTableProps} props - Component props
  * @returns {JSX.Element} Table of projects with actions
  */
-export const ProjectTable: FC<ProjectTableProps> = ({ projects, onEdit, onDelete, isDeletingId }) => {
+export const ProjectTable: FC<ProjectTableProps> = ({ projects, onEdit, onManageRates, onDelete, isDeletingId }) => {
   const { t } = useTranslation('projects');
 
   const columns: Column<Project>[] = useMemo(() => [
@@ -191,6 +194,14 @@ export const ProjectTable: FC<ProjectTableProps> = ({ projects, onEdit, onDelete
           <Button
             type="button"
             size="sm"
+            variant="outline"
+            onClick={() => onManageRates(project)}
+          >
+            {t('rates.manage')}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
             variant="danger"
             onClick={() => onDelete(project)}
             disabled={isDeletingId === project.id}
@@ -200,7 +211,7 @@ export const ProjectTable: FC<ProjectTableProps> = ({ projects, onEdit, onDelete
         </div>
       ),
     },
-  ], [t, onEdit, onDelete, isDeletingId]);
+  ], [t, onEdit, onManageRates, onDelete, isDeletingId]);
   
   return <Table data={projects} columns={columns} pageSize={10} />;
 };

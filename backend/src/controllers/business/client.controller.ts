@@ -180,8 +180,14 @@ export class ClientController {
         return;
     }
 
+    const userId = (req as any).user?.id;
+    if (!userId) {
+      res.status(401).json({ message: 'Authentication required' });
+      return;
+    }
+
     try {
-      const client = await clientService.findById(id);
+      const client = await clientService.findById(id, userId);
       if (client) {
         res.status(200).json(client);
       } else {
@@ -215,6 +221,12 @@ export class ClientController {
         return;
     }
 
+    const userId = (req as any).user?.id;
+    if (!userId) {
+      res.status(401).json({ message: 'Authentication required' });
+      return;
+    }
+
     const { error, value } = updateClientSchema.validate(req.body);
     if (error) {
       // Joi returns an array of errors for update validation
@@ -227,7 +239,7 @@ export class ClientController {
     }
 
     try {
-      const updatedClient = await clientService.update(id, value);
+      const updatedClient = await clientService.update(id, userId, value);
       if (updatedClient) {
         res.status(200).json(updatedClient);
       } else {
@@ -261,8 +273,14 @@ export class ClientController {
         return;
     }
 
+    const userId = (req as any).user?.id;
+    if (!userId) {
+      res.status(401).json({ message: 'Authentication required' });
+      return;
+    }
+
     try {
-      const deleted = await clientService.delete(id);
+      const deleted = await clientService.delete(id, userId);
       if (deleted) {
         res.status(200).json({ message: 'Client deleted successfully' });
       } else {

@@ -10,8 +10,19 @@ import { SkeletonCardList } from '../../common/Skeleton';
 import { ClientFilters, ClientStatusFilter } from './ClientFilters';
 import { ClientTable } from './ClientTable';
 import { ClientFormModal } from './ClientFormModal';
+import { ClientDocumentsModal } from './ClientDocumentsModal';
 import { ClientEmptyState } from './ClientEmptyState';
 import { extractErrorMessage } from '../../../utils/error';
+import {
+  ClientDocument,
+  ClientDocumentUpdatePayload,
+  ClientDocumentUploadPayload,
+} from '../../../api/services/client-document.service';
+import {
+  useDeleteClientDocument,
+  useUpdateClientDocument,
+  useUploadClientDocument,
+} from '../../../hooks/api/useClientDocuments';
 
 export default function ClientList() {
   const { t } = useTranslation('clients');
@@ -27,6 +38,10 @@ export default function ClientList() {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [documentsClient, setDocumentsClient] = useState<Client | null>(null);
+  const [documentError, setDocumentError] = useState<string | null>(null);
+  const [documentSuccess, setDocumentSuccess] = useState<string | null>(null);
+  const [deletingDocumentId, setDeletingDocumentId] = useState<string | null>(null);
 
   const listParams = useMemo(() => {
     return {
@@ -39,6 +54,9 @@ export default function ClientList() {
   const createClient = useCreateClient();
   const updateClient = useUpdateClient();
   const deleteClient = useDeleteClient();
+  const uploadDocument = useUploadClientDocument();
+  const updateDocument = useUpdateClientDocument();
+  const deleteDocument = useDeleteClientDocument();
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -119,6 +137,76 @@ export default function ClientList() {
     }
   };
 
+  const openDocumentsModal = (client: Client) => {
+    setDocumentError(null);
+    setDocumentSuccess(null);
+    setDocumentsClient(client);
+  };
+
+  const closeDocumentsModal = () => {
+    setDocumentsClient(null);
+    setDocumentError(null);
+    setDocumentSuccess(null);
+  };
+
+  const handleDocumentUpload = async (payload: ClientDocumentUploadPayload) => {
+    if (!documentsClient) {
+      return false;
+    }
+    setDocumentError(null);
+    setDocumentSuccess(null);
+    try {
+      await uploadDocument.mutateAsync({ clientId: documentsClient.id, payload });
+      setDocumentSuccess(
+        payload.supersedes_document_id
+          ? t('documents.messages.versionUploaded')
+          : t('documents.messages.uploaded')
+      );
+      return true;
+    } catch (uploadError) {
+      setDocumentError(extractErrorMessage(uploadError));
+      return false;
+    }
+  };
+
+  const handleDocumentUpdate = async (
+    documentId: string,
+    payload: ClientDocumentUpdatePayload
+  ) => {
+    setDocumentError(null);
+    setDocumentSuccess(null);
+    try {
+      await updateDocument.mutateAsync({ documentId, payload });
+      setDocumentSuccess(t('documents.messages.updated'));
+      return true;
+    } catch (updateError) {
+      setDocumentError(extractErrorMessage(updateError));
+      return false;
+    }
+  };
+
+  const handleDocumentDelete = async (document: ClientDocument) => {
+    const confirmed = window.confirm(
+      t('documents.messages.deleteConfirm', { title: document.title })
+    );
+    if (!confirmed) {
+      return false;
+    }
+    setDocumentError(null);
+    setDocumentSuccess(null);
+    setDeletingDocumentId(document.id);
+    try {
+      await deleteDocument.mutateAsync(document.id);
+      setDocumentSuccess(t('documents.messages.deleted'));
+      return true;
+    } catch (documentDeleteError) {
+      setDocumentError(extractErrorMessage(documentDeleteError));
+      return false;
+    } finally {
+      setDeletingDocumentId(null);
+    }
+  };
+
   if (!state.isAuthenticated) {
     return (
       <div className="p-6">
@@ -180,9 +268,10 @@ export default function ClientList() {
         <ClientTable 
           key={`${statusFilter}-${debouncedSearch}`}
           clients={clients} 
-          onEdit={openEditModal} 
-          onDelete={handleDelete} 
-          isDeletingId={deletingId} 
+          onEdit={openEditModal}
+          onDelete={handleDelete}
+          onOpenDocuments={openDocumentsModal}
+          isDeletingId={deletingId}
         />
       )}
 
@@ -195,6 +284,24 @@ export default function ClientList() {
         isSubmitting={createClient.isPending || updateClient.isPending}
         error={formError}
       />
+
+      {documentsClient ? (
+        <ClientDocumentsModal
+          open={Boolean(documentsClient)}
+          client={documentsClient}
+          onClose={closeDocumentsModal}
+          onUpload={handleDocumentUpload}
+          onUpdate={handleDocumentUpdate}
+          onDelete={handleDocumentDelete}
+          isUploading={uploadDocument.isPending}
+          isSaving={updateDocument.isPending}
+          deletingId={deletingDocumentId}
+          error={documentError}
+          successMessage={documentSuccess}
+          onDismissError={() => setDocumentError(null)}
+          onDismissSuccess={() => setDocumentSuccess(null)}
+        />
+      ) : null}
     </div>
   );
 }

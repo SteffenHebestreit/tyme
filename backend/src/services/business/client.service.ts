@@ -141,31 +141,33 @@ export class ClientService {
   }
 
   /**
-   * Retrieves a single client by their ID.
-   * 
+   * Retrieves a single client by their ID, scoped to its owner.
+   * A client belonging to another user reads as "not found".
+   *
    * @param {string} id - The UUID of the client to retrieve
+   * @param {string} userId - The UUID of the user who must own the client
    * @returns {Promise<IClient | null>} The client if found, null otherwise
    * @throws {Error} If the database query fails
-   * 
+   *
    * @example
-   * const client = await clientService.findById('123e4567-e89b-12d3-a456-426614174000');
+   * const client = await clientService.findById('123e4567-e89b-12d3-a456-426614174000', userId);
    * if (client) {
    *   console.log(`Found client: ${client.name}`);
    * }
    */
-  async findById(id: string): Promise<IClient | null> {
+  async findById(id: string, userId: string): Promise<IClient | null> {
     const db = getDbClient();
     const queryText = `
-      SELECT 
+      SELECT
         id, user_id, name, email, phone, address, notes, status,
         use_separate_billing_address, billing_contact_person, billing_email, billing_phone,
         billing_address, billing_city, billing_state, billing_postal_code, billing_country,
         billing_tax_id, created_at, updated_at
-      FROM clients 
-      WHERE id = $1
+      FROM clients
+      WHERE id = $1 AND user_id = $2
     `;
     try {
-      const result = await db.query(queryText, [id]);
+      const result = await db.query(queryText, [id, userId]);
       if (result.rows.length === 0) return null;
       return result.rows[0] as IClient;
     } catch (error) {
@@ -175,21 +177,23 @@ export class ClientService {
   }
 
   /**
-   * Updates an existing client's information.
+   * Updates an existing client's information, scoped to its owner.
    * Only provided fields will be updated; undefined fields are ignored.
-   * 
+   * A client belonging to another user reads as "not found".
+   *
    * @param {string} id - The UUID of the client to update
+   * @param {string} userId - The UUID of the user who must own the client
    * @param {UpdateClientDto} clientData - The client data to update (partial)
    * @returns {Promise<IClient | null>} The updated client, or null if not found
    * @throws {Error} If the database operation fails
-   * 
+   *
    * @example
-   * const updated = await clientService.update('123e4567-e89b-12d3-a456-426614174000', {
+   * const updated = await clientService.update('123e4567-e89b-12d3-a456-426614174000', userId, {
    *   email: 'newemail@acme.com',
    *   status: 'inactive'
    * });
    */
-  async update(id: string, clientData: UpdateClientDto): Promise<IClient | null> {
+  async update(id: string, userId: string, clientData: UpdateClientDto): Promise<IClient | null> {
     const db = getDbClient();
     const setParts = [];
     const values: any[] = [];
@@ -246,20 +250,20 @@ export class ClientService {
 
     if (setParts.length === 0) {
       // No fields to update
-      return this.findById(id);
+      return this.findById(id, userId);
     }
 
     const queryText = `
-      UPDATE clients 
-      SET ${setParts.join(', ')}, updated_at = CURRENT_TIMESTAMP 
-      WHERE id = $${paramIndex}
+      UPDATE clients
+      SET ${setParts.join(', ')}, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $${paramIndex++} AND user_id = $${paramIndex}
       RETURNING
         id, user_id, name, email, phone, address, notes, status,
         use_separate_billing_address, billing_contact_person, billing_email, billing_phone,
         billing_address, billing_city, billing_state, billing_postal_code, billing_country,
         billing_tax_id, created_at, updated_at
     `;
-    values.push(id);
+    values.push(id, userId);
 
     try {
         const result = await db.query(queryText, values);
@@ -272,27 +276,50 @@ export class ClientService {
   }
 
   /**
-   * Deletes a client from the database.
+   * Deletes a client from the database, scoped to its owner.
    * Will fail if there are associated projects due to foreign key constraints.
-   * 
+   *
+   * Documents hanging on the client are removed by the ON DELETE CASCADE on
+   * client_documents.client_id, but that only takes the ROWS — the objects
+   * behind them would be stranded in storage forever, since nothing sweeps
+   * unreferenced objects. So the files are deleted first. A file that cannot be
+   * removed is logged and skipped: an unreachable storage backend must not
+   * block the owner from deleting their client.
+   *
    * @param {string} id - The UUID of the client to delete
+   * @param {string} userId - The UUID of the user who must own the client
    * @returns {Promise<boolean>} True if deletion was successful, false if client not found
    * @throws {Error} If the client has associated projects or database operation fails
-   * 
+   *
    * @example
    * try {
-   *   const deleted = await clientService.delete('123e4567-e89b-12d3-a456-426614174000');
+   *   const deleted = await clientService.delete('123e4567-e89b-12d3-a456-426614174000', userId);
    *   if (deleted) console.log('Client deleted successfully');
    * } catch (error) {
    *   console.error('Cannot delete client with projects');
    * }
    */
-  async delete(id: string): Promise<boolean> {
+  async delete(id: string, userId: string): Promise<boolean> {
     const db = getDbClient();
-    const queryText = `DELETE FROM clients WHERE id = $1`;
     try {
-      const result = await db.query(queryText, [id]);
-      return (result.rowCount ?? 0) > 0;
+      // Collect the file paths BEFORE the delete (the FK cascade removes the
+      // client_documents rows), but only remove the objects AFTER the delete has
+      // actually succeeded. Deleting them first would destroy every signed
+      // contract even when the delete then fails — and it routinely does:
+      // invoices.client_id is ON DELETE RESTRICT, so any client that has ever
+      // been invoiced raises 23503 below. There is no storage GC and no way to
+      // get those files back.
+      const fileUrls = await this.collectClientDocumentFileUrls(id, userId);
+
+      const queryText = `DELETE FROM clients WHERE id = $1 AND user_id = $2`;
+      const result = await db.query(queryText, [id, userId]);
+      const deleted = (result.rowCount ?? 0) > 0;
+
+      if (deleted) {
+        await this.deleteStoredFiles(fileUrls);
+      }
+
+      return deleted;
     } catch (error) {
         logger.error('Error deleting client:', error);
         // Handle foreign key constraint violation if a project exists for this client
@@ -300,6 +327,62 @@ export class ClientService {
             throw new Error('Cannot delete client. There are projects associated with it.');
         }
         throw new Error(`Failed to delete client: ${(error as any).message}`);
+    }
+  }
+
+  /**
+   * Reads the storage paths of a client's document files.
+   *
+   * Best-effort: a database that has not run the client_documents migration yet
+   * must still be able to delete a client.
+   *
+   * @param {string} id - The UUID of the client
+   * @param {string} userId - The UUID of the user who must own the client
+   * @returns {Promise<string[]>} Stored file paths, empty when none or on error
+   */
+  private async collectClientDocumentFileUrls(id: string, userId: string): Promise<string[]> {
+    const db = getDbClient();
+    try {
+      const result = await db.query(
+        `SELECT d.file_url
+         FROM client_documents d
+         JOIN clients c ON c.id = d.client_id
+         WHERE d.client_id = $1 AND c.user_id = $2 AND d.file_url IS NOT NULL`,
+        [id, userId]
+      );
+      return result.rows.map((row: any) => row.file_url);
+    } catch (error) {
+      logger.error(`Error collecting document files for client ${id}:`, error);
+      return [];
+    }
+  }
+
+  /**
+   * Removes stored objects, one failure never blocking the rest.
+   *
+   * Called only after the owning rows are gone, so a stranded object is the
+   * worst case — never a row pointing at a file that no longer exists.
+   *
+   * @param {string[]} fileUrls - Stored file paths to remove
+   * @returns {Promise<void>}
+   */
+  private async deleteStoredFiles(fileUrls: string[]): Promise<void> {
+    if (fileUrls.length === 0) return;
+
+    try {
+      // Import storage service dynamically to avoid circular dependencies
+      const { storageService } = await import('../storage/storage.service');
+
+      for (const fileUrl of fileUrls) {
+        try {
+          await storageService.deleteFileFromPath(fileUrl);
+        } catch (error) {
+          logger.error(`Error deleting client document file ${fileUrl}:`, error);
+          // Don't throw - a stranded object must not block the deletion
+        }
+      }
+    } catch (error) {
+      logger.error('Error loading storage service for document cleanup:', error);
     }
   }
 }

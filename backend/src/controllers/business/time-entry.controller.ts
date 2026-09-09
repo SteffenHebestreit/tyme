@@ -540,9 +540,12 @@ export class TimeEntryController {
           return;
         }
 
-      // Fetch project to get hourly_rate
-      const project = await projectService.findById(project_id);
-      if (!project) {
+      // Confirm the project belongs to the caller before using it. Note
+      // projectService.findById has NO user_id filter, so it alone would let a
+      // timer be started against another tenant's project and stamped with
+      // their rate. getEffectiveRate is owner-scoped, hence the explicit check.
+      const ownsProject = await projectService.findByIdForUser(project_id, userId);
+      if (!ownsProject) {
         res.status(400).json({ message: 'Invalid project_id specified.' });
         return;
       }
@@ -556,7 +559,9 @@ export class TimeEntryController {
         description: req.body.description || '',
         category: req.body.category || undefined,
         is_billable: req.body.is_billable ?? true,
-        hourly_rate: project.hourly_rate || undefined,
+        // Leave undefined: TimeEntryService.create stamps the rate effective on
+        // entry_date from the project's rate timeline.
+        hourly_rate: undefined,
         // Set entry_date, entry_time, and duration_hours for active timers (satisfies NOT NULL constraints)
         entry_date: now,
         entry_time: formatTimeString(now), // HH:MM:SS format in Europe/Berlin timezone

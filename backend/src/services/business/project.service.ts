@@ -65,6 +65,21 @@ export class ProjectService {
 
     try {
       const result = await db.query(queryText, values);
+
+      // Open the project's rate timeline straight away. Without this the rate
+      // would live only on projects.hourly_rate, and the first edit made
+      // through the rate timeline would silently disagree with it.
+      if (result.rows[0]?.hourly_rate !== null && result.rows[0]?.hourly_rate !== undefined) {
+        await this.recordRatePeriod(
+          db,
+          result.rows[0].id,
+          result.rows[0].user_id,
+          result.rows[0].hourly_rate,
+          projectData.start_date ? String(projectData.start_date).slice(0, 10) : null,
+          'Initial rate'
+        );
+      }
+
       // Fetch associated client details
       return await this.getProjectWithClient(result.rows[0]);
     } catch (error) {
@@ -184,6 +199,83 @@ export class ProjectService {
   }
 
   /**
+   * Records a rate period on the project's timeline.
+   *
+   * Keeps `projects.hourly_rate` and `project_rate_history` from drifting apart:
+   * whichever surface changes the rate, the timeline is what time entries are
+   * stamped from, so it has to learn about the change too.
+   *
+   * Upserts on (project_id, valid_from) — the unique key — so correcting the
+   * rate twice on the same day replaces that day's period instead of failing.
+   * Periods that already started earlier are untouched, which is what keeps
+   * previously logged work at its original rate.
+   *
+   * @param db - Pool or transaction client to run on
+   * @param projectId - The project whose timeline to extend
+   * @param userId - Owner, copied onto the rate row
+   * @param hourlyRate - The new rate
+   * @param validFrom - YYYY-MM-DD, or null for today
+   * @param note - Provenance note shown in the rate timeline UI
+   */
+  private async recordRatePeriod(
+    db: any,
+    projectId: string,
+    userId: string,
+    hourlyRate: number | string,
+    validFrom: string | null,
+    note: string
+  ): Promise<void> {
+    try {
+      await db.query(
+        `INSERT INTO project_rate_history (user_id, project_id, hourly_rate, valid_from, note)
+         VALUES ($1, $2, $3, COALESCE($4::date, CURRENT_DATE), $5)
+         ON CONFLICT (project_id, valid_from)
+         DO UPDATE SET hourly_rate = EXCLUDED.hourly_rate, updated_at = CURRENT_TIMESTAMP`,
+        [userId, projectId, hourlyRate, validFrom, note]
+      );
+    } catch (error) {
+      // Never fail the project write over the timeline copy — a database that
+      // has not run the migration yet must still be able to save a project.
+      logger.error('Error recording project rate period:', error);
+    }
+  }
+
+  /**
+   * Fetches a project only if it belongs to the given user.
+   *
+   * {@link findById} deliberately kept its original unscoped behaviour so
+   * existing callers are unaffected, but anything that acts on a project id
+   * taken from a request must use this instead — otherwise a caller can pass
+   * another tenant's project id and act on their data.
+   *
+   * @async
+   * @param {string} id - The UUID of the project
+   * @param {string} userId - The Keycloak user ID that must own it
+   * @returns {Promise<IProject | null>} The project, or null if it does not
+   *          exist OR belongs to someone else (indistinguishable by design)
+   *
+   * @example
+   * const project = await projectService.findByIdForUser(projectId, req.user.id);
+   * if (!project) return res.status(404).json({ error: 'Not found' });
+   */
+  async findByIdForUser(id: string, userId: string): Promise<IProject | null> {
+    const db = getDbClient();
+    const queryText = `
+      SELECT p.id, p.user_id, p.name, p.description, p.client_id, p.status, p.start_date, p.end_date,
+             p.hourly_rate, p.budget, p.rate_type, p.estimated_hours, p.currency, p.tags, p.recurring_payment, p.created_at, p.updated_at
+      FROM projects p WHERE p.id = $1 AND p.user_id = $2
+    `;
+    try {
+      const result = await db.query(queryText, [id, userId]);
+      if (result.rows.length === 0) return null;
+      return this.getProjectWithClient(result.rows[0]);
+    } catch (error) {
+      logger.error('Error fetching project by ID for user:', error);
+      throw new Error(`Failed to fetch project: ${(error as any).message}`);
+    }
+  }
+
+  /**
    * Updates an existing project with partial data.
    * Only provided fields will be updated; undefined fields are ignored.
    * Returns null if the project is not found.
@@ -238,6 +330,22 @@ export class ProjectService {
     try {
         const result = await db.query(queryText, values);
         if (result.rows.length === 0) return null;
+
+        // Editing the rate on the project form means "the rate is this from
+        // today". Writing only projects.hourly_rate would leave the timeline
+        // stale, and new time entries — which are stamped from the timeline —
+        // would silently keep the OLD rate while the UI showed the new one.
+        if (projectData.hourly_rate !== undefined && projectData.hourly_rate !== null) {
+          await this.recordRatePeriod(
+            db,
+            result.rows[0].id,
+            result.rows[0].user_id,
+            projectData.hourly_rate,
+            null,
+            'Rate changed on project'
+          );
+        }
+
         return this.getProjectWithClient(result.rows[0]);
     } catch (error) {
         logger.error('Error updating project:', error);

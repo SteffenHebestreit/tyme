@@ -6,6 +6,7 @@ import {
   TimeEntryStatus
 } from '../../models/business/time-entry.model';
 import { logger } from '../../utils/logger';
+import { projectRateService } from './project-rate.service';
 
 const db = getDbClient();
 
@@ -40,7 +41,42 @@ export class TimeEntryService {
    */
   async create(timeEntryData: CreateTimeEntryDto): Promise<ITimeEntry> {
     const db = getDbClient();
-    
+
+    // Stamp the rate that was effective on the day the work happened, so a
+    // later rate change cannot re-price this entry. Only when the caller did
+    // not supply one — an explicit rate, including 0, always wins. Without this
+    // the entry would keep a NULL rate and invoicing would fall back to the
+    // project's current rate at billing time.
+    let effectiveRate = timeEntryData.hourly_rate;
+    if (
+      (effectiveRate === undefined || effectiveRate === null) &&
+      timeEntryData.project_id &&
+      timeEntryData.user_id
+    ) {
+      try {
+        // entry_date is typed as Date but arrives as a 'YYYY-MM-DD' string from
+        // the API layer; accept both and normalise to the date-only form the
+        // rate lookup compares against.
+        const rawDate: any = timeEntryData.entry_date;
+        const onDate =
+          rawDate instanceof Date
+            ? rawDate.toISOString().slice(0, 10)
+            : typeof rawDate === 'string' && rawDate
+              ? rawDate.slice(0, 10)
+              : undefined;
+
+        effectiveRate = (await projectRateService.getEffectiveRate(
+          timeEntryData.project_id,
+          timeEntryData.user_id,
+          onDate
+        )) ?? undefined;
+      } catch (error) {
+        // A failed lookup must not block time tracking; the entry is simply
+        // saved unstamped and the startup backfill picks it up later.
+        logger.error('Error resolving effective rate for new time entry:', error);
+      }
+    }
+
     // New model uses entry_date, entry_time, entry_end_time, and duration_hours directly
     const queryText = `
       INSERT INTO time_entries 
@@ -63,7 +99,7 @@ export class TimeEntryService {
       timeEntryData.is_billable ?? true, // Default to true
       timeEntryData.category || null,
       timeEntryData.tags || null,
-      timeEntryData.hourly_rate || null,
+      effectiveRate ?? null, // ?? not ||, so an explicit rate of 0 survives
       timeEntryData.date_start || null, // Keep for backward compatibility
     ];
 

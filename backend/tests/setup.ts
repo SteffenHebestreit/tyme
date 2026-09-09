@@ -24,6 +24,8 @@ export const TEST_USER_ID = '123e4567-e89b-12d3-a456-426614174000';
 // Tables to clean in the correct order (respecting foreign keys)
 const TABLES_TO_CLEAN = [
   'depreciation_schedules',
+  'client_documents',
+  'project_rate_history',
   'time_entries',
   'invoice_items',
   'payments',

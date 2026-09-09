@@ -284,4 +284,41 @@ describe('ProjectService', () => {
       expect(updated?.name).toBe('No Change Project');
     });
   });
+  describe('findByIdForUser', () => {
+    it('should return the project for its owner', async () => {
+      const project = await projectService.create({
+        user_id: TEST_USER_ID,
+        name: 'Owned Project',
+        client_id: testClient.id,
+      });
+
+      const found = await projectService.findByIdForUser(project.id, TEST_USER_ID);
+
+      expect(found?.id).toBe(project.id);
+    });
+
+    it('should not return another user project', async () => {
+      const project = await projectService.create({
+        user_id: TEST_USER_ID,
+        name: 'Someone Else Project',
+        client_id: testClient.id,
+      });
+
+      const found = await projectService.findByIdForUser(
+        project.id,
+        '99999999-9999-4999-8999-999999999999'
+      );
+
+      expect(found).toBeNull();
+    });
+
+    it('should return null for an unknown id', async () => {
+      const found = await projectService.findByIdForUser(
+        '00000000-0000-0000-0000-000000000000',
+        TEST_USER_ID
+      );
+
+      expect(found).toBeNull();
+    });
+  });
 });

@@ -38,6 +38,60 @@
     "due": "Fällig",
     "rate": "Satz"
   },
+  "rates": {
+    "manage": "Sätze",
+    "title": "Stundensätze — {{name}}",
+    "titleFallback": "Stundensätze",
+    "close": "Schließen",
+    "intro": "Eine Satzänderung bewertet bereits erfasste Arbeit nicht neu — bestehende Zeiteinträge behalten den Satz, mit dem sie gespeichert wurden.",
+    "loading": "Satzzeiträume werden geladen…",
+    "openEnded": "Unbefristet",
+    "perHour": "/Std.",
+    "columns": {
+      "validFrom": "Gültig ab",
+      "validUntil": "Gültig bis",
+      "rate": "Stundensatz",
+      "note": "Notiz",
+      "actions": "Aktionen"
+    },
+    "badge": {
+      "current": "Aktueller Satz",
+      "scheduled": "Geplant"
+    },
+    "empty": {
+      "title": "Noch keine Satzzeiträume",
+      "message": "Legen Sie unten den ersten Satz an. Danach können Sie Änderungen im Voraus planen, ohne bereits Abgerechnetes anzutasten."
+    },
+    "form": {
+      "addTitle": "Satzzeitraum hinzufügen",
+      "editTitle": "Satzzeitraum bearbeiten",
+      "addSubmit": "Satz hinzufügen",
+      "saveEdit": "Änderungen speichern",
+      "cancelEdit": "Abbrechen",
+      "rate": {
+        "label": "Stundensatz",
+        "placeholder": "150",
+        "required": "Stundensatz ist erforderlich",
+        "min": "Stundensatz muss null oder höher sein"
+      },
+      "validFrom": {
+        "label": "Gültig ab",
+        "required": "Startdatum ist erforderlich",
+        "helper": "Ein Datum in der Zukunft plant die Änderung vor."
+      },
+      "note": {
+        "label": "Notiz",
+        "placeholder": "Per E-Mail vereinbart"
+      }
+    },
+    "messages": {
+      "added": "Satzzeitraum hinzugefügt.",
+      "updated": "Satzzeitraum aktualisiert.",
+      "deleted": "Satzzeitraum gelöscht.",
+      "conflict": "Zu diesem Datum beginnt bereits ein Satz. Bearbeiten Sie diesen Zeitraum oder wählen Sie ein anderes Startdatum.",
+      "deleteConfirm": "Satzzeitraum ab {{date}} löschen? Bereits erfasste Zeiteinträge behalten ihren Satz."
+    }
+  },
   "form": {
     "name": {
       "label": "Projektname",

@@ -6,10 +6,22 @@ export const queryKeys = {
     list: (params?: ApiListParams) => ['clients', 'list', params] as const,
     detail: (id: string) => ['clients', 'detail', id] as const,
   },
+  clientDocuments: {
+    all: ['clientDocuments'] as const,
+    list: (clientId: string, filters?: unknown) =>
+      ['clientDocuments', 'list', clientId, filters] as const,
+    detail: (documentId: string) => ['clientDocuments', 'detail', documentId] as const,
+  },
   projects: {
     all: ['projects'] as const,
     list: (params?: ApiListParams) => ['projects', 'list', params] as const,
     detail: (id: string) => ['projects', 'detail', id] as const,
+  },
+  projectRates: {
+    all: ['projectRates'] as const,
+    list: (projectId: string) => ['projectRates', 'list', projectId] as const,
+    detail: (rateId: string) => ['projectRates', 'detail', rateId] as const,
+    effective: (projectId: string, date?: string) => ['projectRates', 'effective', projectId, date] as const,
   },
   timeEntries: {
     all: ['timeEntries'] as const,

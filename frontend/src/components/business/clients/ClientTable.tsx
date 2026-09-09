@@ -33,12 +33,14 @@ import { Table, Column } from '../../common/Table';
  * @property {Client[]} clients - Array of client records to display
  * @property {(client: Client) => void} onEdit - Handler for edit button click
  * @property {(client: Client) => void} onDelete - Handler for delete button click
+ * @property {(client: Client) => void} onOpenDocuments - Handler for opening the client's stored documents
  * @property {string | null} [isDeletingId] - ID of client currently being deleted (for loading state)
  */
 interface ClientTableProps {
   clients: Client[];
   onEdit: (client: Client) => void;
   onDelete: (client: Client) => void;
+  onOpenDocuments: (client: Client) => void;
   isDeletingId?: string | null;
 }
 
@@ -150,7 +152,7 @@ const formatDate = (isoString: string) => {
  * @param {ClientTableProps} props - Component props
  * @returns {JSX.Element} Client table component
  */
-export const ClientTable: FC<ClientTableProps> = ({ clients, onEdit, onDelete, isDeletingId }) => {
+export const ClientTable: FC<ClientTableProps> = ({ clients, onEdit, onDelete, onOpenDocuments, isDeletingId }) => {
   const { t } = useTranslation('clients');
 
   const columns: Column<Client>[] = useMemo(() => [
@@ -213,6 +215,14 @@ export const ClientTable: FC<ClientTableProps> = ({ clients, onEdit, onDelete, i
             type="button"
             size="sm"
             variant="outline"
+            onClick={() => onOpenDocuments(client)}
+          >
+            {t('documents.action')}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
             onClick={() => onEdit(client)}
           >
             {t('edit')}
@@ -229,7 +239,7 @@ export const ClientTable: FC<ClientTableProps> = ({ clients, onEdit, onDelete, i
         </div>
       ),
     },
-  ], [t, onEdit, onDelete, isDeletingId]);
+  ], [t, onEdit, onDelete, onOpenDocuments, isDeletingId]);
   
   return <Table data={clients} columns={columns} pageSize={10} />;
 };

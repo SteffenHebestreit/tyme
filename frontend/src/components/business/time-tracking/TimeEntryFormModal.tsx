@@ -16,7 +16,7 @@
  * @module components/business/time-tracking/TimeEntryFormModal
  */
 
-import { FC, useEffect, useMemo, useState } from 'react';
+import { FC, useEffect, useMemo, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
@@ -29,6 +29,7 @@ import { Modal } from '../../ui/Modal';
 import { Project, TimeEntry, TimeEntryPayload, Client } from '../../../api/types';
 import { TimeSlotPicker } from './TimeSlotPicker';
 import { fetchTimeEntries, checkTimeEntryOverlap } from '../../../api/services/timeEntry.service';
+import { getEffectiveRate } from '../../../api/services/project-rate.service';
 import { Calendar } from 'lucide-react';
 
 /**
@@ -301,12 +302,17 @@ export const TimeEntryFormModal: FC<TimeEntryFormModalProps> = ({
     clearErrors,
     watch,
     setValue,
-    formState: { errors },
+    formState: { errors, dirtyFields },
   } = useForm<FormValues>({
     defaultValues: initialValues,
   });
 
   // Watch time fields to auto-calculate duration
+  // Mirrors dirtyFields so an async rate lookup can check it at apply time
+  // without re-running the effect on every keystroke.
+  const dirtyFieldsRef = useRef(dirtyFields);
+  dirtyFieldsRef.current = dirtyFields;
+
   const watchStartTime = watch('start_time');
   const watchEndTime = watch('end_time');
   const watchDuration = watch('duration_hours');
@@ -373,15 +379,51 @@ export const TimeEntryFormModal: FC<TimeEntryFormModalProps> = ({
     }
   }, [watchStartTime, watchEndTime, setValue]);
 
-  // Auto-fill hourly rate when project changes
+  /**
+   * Auto-fill the hourly rate from the project's rate timeline.
+   *
+   * Uses the rate effective on the ENTRY's date, not the project's current
+   * rate: logging yesterday's work after a rate rise must bill at the old rate.
+   * Prefilling project.hourly_rate would submit today's rate explicitly and
+   * override the date-effective rate the backend would otherwise stamp.
+   *
+   * Falls back to the project's current rate only when the lookup fails, so a
+   * network hiccup degrades to the old behaviour rather than an empty field.
+   */
   useEffect(() => {
-    if (watchProjectId && !watchDuration) {
-      const selectedProject = projects.find(p => p.id === watchProjectId);
-      if (selectedProject?.hourly_rate) {
-        setValue('hourly_rate', String(selectedProject.hourly_rate));
-      }
-    }
-  }, [watchProjectId, projects, setValue, watchDuration]);
+    if (!watchProjectId) return;
+
+    // Never overwrite a rate the user typed themselves. dirtyFields is checked
+    // at apply time rather than in the dependency list, so a rate edited while
+    // the request is still in flight also survives — the response can arrive
+    // after the keystroke.
+    let cancelled = false;
+
+    const apply = (value: string) => {
+      if (cancelled || dirtyFieldsRef.current.hourly_rate) return;
+      setValue('hourly_rate', value);
+    };
+
+    getEffectiveRate(watchProjectId, watchEntryDate || undefined)
+      .then(result => {
+        if (result.hourly_rate !== null && result.hourly_rate !== undefined) {
+          apply(String(result.hourly_rate));
+        } else {
+          // No rate agreed for that date — leave it to the user rather than
+          // inventing one.
+          apply('');
+        }
+      })
+      .catch(() => {
+        // Degrade to the project's current rate rather than an empty field.
+        const selectedProject = projects.find(p => p.id === watchProjectId);
+        if (selectedProject?.hourly_rate) apply(String(selectedProject.hourly_rate));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [watchProjectId, watchEntryDate, projects, setValue]);
 
   useEffect(() => {
     if (open) {

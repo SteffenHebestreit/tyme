@@ -1,5 +1,6 @@
 export * from './useClients';
 export * from './useProjects';
+export * from './useProjectRates';
 export * from './useTimeEntries';
 export * from './useInvoices';
 export * from './usePayments';

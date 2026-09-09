@@ -9,6 +9,17 @@ import {
   useProjects,
   useUpdateProject,
 } from '../../../hooks/api/useProjects';
+import {
+  useAddProjectRate,
+  useDeleteProjectRate,
+  useProjectRates,
+  useUpdateProjectRate,
+} from '@/hooks/api/useProjectRates';
+import type {
+  ProjectRatePayload,
+  ProjectRatePeriod,
+  ProjectRateUpdatePayload,
+} from '@/api/services/project-rate.service';
 import { Project } from '../../../api/types';
 import { Button } from '../../common/Button';
 import { Alert } from '../../common/Alert';
@@ -17,7 +28,20 @@ import { extractErrorMessage } from '../../../utils/error';
 import { ProjectFilters, ProjectStatusFilter } from './ProjectFilters';
 import { ProjectTable } from './ProjectTable';
 import { ProjectFormModal } from './ProjectFormModal';
+import { ProjectRatesModal } from './ProjectRatesModal';
 import { ProjectEmptyState } from './ProjectEmptyState';
+
+/**
+ * A duplicate rate start date comes back as a 409 rather than a server fault,
+ * so it gets a plain, translated explanation instead of a raw error message.
+ *
+ * @param {unknown} error - The rejection from a rate mutation
+ * @returns {boolean} True when the backend reported a conflict
+ */
+const isConflictError = (error: unknown): boolean =>
+  typeof error === 'object' &&
+  error !== null &&
+  (error as { response?: { status?: number } }).response?.status === 409;
 
 export default function ProjectList() {
   const { t } = useTranslation('projects');
@@ -34,6 +58,10 @@ export default function ProjectList() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [ratesProject, setRatesProject] = useState<Project | null>(null);
+  const [isRatesModalOpen, setIsRatesModalOpen] = useState(false);
+  const [rateFormError, setRateFormError] = useState<string | null>(null);
+  const [deletingRateId, setDeletingRateId] = useState<string | null>(null);
 
   const listParams = useMemo(() => {
     return {
@@ -60,6 +88,16 @@ export default function ProjectList() {
   const createProject = useCreateProject();
   const updateProject = useUpdateProject();
   const deleteProject = useDeleteProject();
+
+  const {
+    data: rates = [],
+    isLoading: isLoadingRates,
+    isError: isRatesError,
+    error: ratesError,
+  } = useProjectRates(ratesProject?.id, isRatesModalOpen);
+  const addProjectRate = useAddProjectRate();
+  const updateProjectRate = useUpdateProjectRate();
+  const deleteProjectRate = useDeleteProjectRate();
 
   const projectsWithClientNames = useMemo(() => {
     if (!clients.length) {
@@ -128,6 +166,82 @@ export default function ProjectList() {
       closeModal();
     } catch (submitError) {
       setFormError(extractErrorMessage(submitError));
+    }
+  };
+
+  const openRatesModal = (project: Project) => {
+    setRatesProject(project);
+    setRateFormError(null);
+    setIsRatesModalOpen(true);
+  };
+
+  const closeRatesModal = () => {
+    setIsRatesModalOpen(false);
+    setRatesProject(null);
+    setRateFormError(null);
+  };
+
+  /**
+   * Stores a rate period, either new or corrected.
+   *
+   * @returns {Promise<boolean>} True when the period was stored, so the modal knows
+   * whether it may clear its draft.
+   */
+  const handleRateSubmit = async (
+    payload: ProjectRatePayload | ProjectRateUpdatePayload,
+    rateId?: string
+  ): Promise<boolean> => {
+    if (!ratesProject) {
+      return false;
+    }
+    setRateFormError(null);
+    setSuccessMessage(null);
+    setActionError(null);
+    try {
+      if (rateId) {
+        await updateProjectRate.mutateAsync({
+          projectId: ratesProject.id,
+          rateId,
+          payload: payload as ProjectRateUpdatePayload,
+        });
+        setSuccessMessage(t('rates.messages.updated'));
+      } else {
+        await addProjectRate.mutateAsync({
+          projectId: ratesProject.id,
+          payload: payload as ProjectRatePayload,
+        });
+        setSuccessMessage(t('rates.messages.added'));
+      }
+      return true;
+    } catch (submitError) {
+      setRateFormError(
+        isConflictError(submitError)
+          ? t('rates.messages.conflict')
+          : extractErrorMessage(submitError)
+      );
+      return false;
+    }
+  };
+
+  const handleRateDelete = async (rate: ProjectRatePeriod) => {
+    if (!ratesProject) {
+      return;
+    }
+    const confirmed = window.confirm(t('rates.messages.deleteConfirm', { date: rate.valid_from }));
+    if (!confirmed) {
+      return;
+    }
+    setRateFormError(null);
+    setSuccessMessage(null);
+    setActionError(null);
+    setDeletingRateId(rate.id);
+    try {
+      await deleteProjectRate.mutateAsync({ projectId: ratesProject.id, rateId: rate.id });
+      setSuccessMessage(t('rates.messages.deleted'));
+    } catch (deleteErr) {
+      setRateFormError(extractErrorMessage(deleteErr));
+    } finally {
+      setDeletingRateId(null);
     }
   };
 
@@ -225,6 +339,7 @@ export default function ProjectList() {
         <ProjectTable
           projects={projectsWithClientNames}
           onEdit={openEditModal}
+          onManageRates={openRatesModal}
           onDelete={handleDelete}
           isDeletingId={deletingId}
         />
@@ -239,6 +354,20 @@ export default function ProjectList() {
         onClose={closeModal}
         isSubmitting={createProject.isPending || updateProject.isPending}
         error={formError}
+      />
+
+      <ProjectRatesModal
+        open={isRatesModalOpen}
+        project={ratesProject}
+        rates={rates}
+        isLoading={isLoadingRates}
+        loadError={isRatesError ? extractErrorMessage(ratesError) : null}
+        onSubmit={handleRateSubmit}
+        onDelete={handleRateDelete}
+        onClose={closeRatesModal}
+        isSubmitting={addProjectRate.isPending || updateProjectRate.isPending}
+        deletingRateId={deletingRateId}
+        error={rateFormError}
       />
     </div>
   );

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { ProjectController } from '../../controllers/business/project.controller';
+import { projectRateController } from '../../controllers/business/project-rate.controller';
 import { authenticateKeycloak, extractKeycloakUser } from '../../middleware/auth/keycloak.middleware';
 
 const router = Router();
@@ -8,6 +9,22 @@ const projectController = new ProjectController();
 // Apply Keycloak authentication to all routes
 router.use(authenticateKeycloak);
 router.use(extractKeycloakUser);
+
+/**
+ * Date-effective hourly rates.
+ *
+ * Deliberately NOT annotated with @openapi: every documented route is turned
+ * into a callable LLM tool by openapi-tool-builder.service.ts, and '/projects'
+ * is not in its BLOCKED_PREFIXES. Documenting these would let the AI assistant
+ * re-price future work on its own. Same reasoning as expense.routes.ts.
+ *
+ * Registered before the '/:id' routes so the literal segments always win.
+ */
+router.get('/:id/rates', projectRateController.listRates);
+router.get('/:id/rates/effective', projectRateController.getEffectiveRate);
+router.post('/:id/rates', projectRateController.addRate);
+router.put('/rates/:rateId', projectRateController.updateRate);
+router.delete('/rates/:rateId', projectRateController.deleteRate);
 
 /**
  * @openapi

@@ -38,6 +38,60 @@
     "due": "Due",
     "rate": "Rate"
   },
+  "rates": {
+    "manage": "Rates",
+    "title": "Hourly rates — {{name}}",
+    "titleFallback": "Hourly rates",
+    "close": "Close",
+    "intro": "Changing a rate never re-prices work you already logged — existing time entries keep the rate they were saved with.",
+    "loading": "Loading rate periods…",
+    "openEnded": "Open-ended",
+    "perHour": "/hr",
+    "columns": {
+      "validFrom": "Valid from",
+      "validUntil": "Valid until",
+      "rate": "Rate",
+      "note": "Note",
+      "actions": "Actions"
+    },
+    "badge": {
+      "current": "Current rate",
+      "scheduled": "Scheduled"
+    },
+    "empty": {
+      "title": "No rate periods yet",
+      "message": "Add the first rate below. From then on you can schedule changes in advance without touching what is already billed."
+    },
+    "form": {
+      "addTitle": "Add rate period",
+      "editTitle": "Edit rate period",
+      "addSubmit": "Add rate",
+      "saveEdit": "Save changes",
+      "cancelEdit": "Cancel",
+      "rate": {
+        "label": "Hourly rate",
+        "placeholder": "150",
+        "required": "Hourly rate is required",
+        "min": "Hourly rate must be zero or higher"
+      },
+      "validFrom": {
+        "label": "Valid from",
+        "required": "Start date is required",
+        "helper": "A future date schedules the change."
+      },
+      "note": {
+        "label": "Note",
+        "placeholder": "Agreed by e-mail"
+      }
+    },
+    "messages": {
+      "added": "Rate period added.",
+      "updated": "Rate period updated.",
+      "deleted": "Rate period deleted.",
+      "conflict": "A rate already starts on that date. Edit that period instead, or pick another start date.",
+      "deleteConfirm": "Delete the rate period starting {{date}}? Already-logged time entries keep their rate."
+    }
+  },
   "form": {
     "name": {
       "label": "Project name",

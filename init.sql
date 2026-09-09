@@ -2345,6 +2345,57 @@ CREATE INDEX IF NOT EXISTS idx_recurring_invoices_user ON public.recurring_invoi
 CREATE INDEX IF NOT EXISTS idx_recurring_invoices_due ON public.recurring_invoices(is_active, next_occurrence) WHERE is_active = true;
 
 
+-- Migration: date-effective project hourly rates (idempotent)
+-- Each row is the rate that applies from valid_from until the next row's
+-- valid_from. Time entries stamp their rate at creation, so changing a rate
+-- here never re-prices work that is already logged.
+CREATE TABLE IF NOT EXISTS public.project_rate_history (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id uuid NOT NULL,
+    project_id uuid NOT NULL REFERENCES public.projects(id) ON DELETE CASCADE,
+    hourly_rate numeric(10,2) NOT NULL CHECK (hourly_rate >= 0),
+    valid_from date NOT NULL,
+    note text,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+);
+-- One rate per project per day: a second rate on the same date would make
+-- "the rate on date X" ambiguous.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_project_rate_history_project_date ON public.project_rate_history(project_id, valid_from);
+CREATE INDEX IF NOT EXISTS idx_project_rate_history_user ON public.project_rate_history(user_id);
+CREATE INDEX IF NOT EXISTS idx_project_rate_history_lookup ON public.project_rate_history(project_id, valid_from DESC);
+
+-- Migration: signed client documents (contracts and similar) (idempotent)
+-- Documents belong to a client; project_id optionally narrows one to a single
+-- project. A new version points at the row it replaces via
+-- supersedes_document_id (SET NULL, so deleting one version never cascades
+-- away the rest of the chain).
+CREATE TABLE IF NOT EXISTS public.client_documents (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id uuid NOT NULL,
+    client_id uuid NOT NULL REFERENCES public.clients(id) ON DELETE CASCADE,
+    project_id uuid REFERENCES public.projects(id) ON DELETE SET NULL,
+    title character varying(255) NOT NULL,
+    document_type character varying(50) NOT NULL DEFAULT 'contract' CHECK (document_type IN ('contract', 'amendment', 'nda', 'offer', 'order', 'invoice_terms', 'other')),
+    file_url text,
+    file_filename character varying(255),
+    file_size integer,
+    file_mimetype character varying(100),
+    version integer NOT NULL DEFAULT 1,
+    supersedes_document_id uuid REFERENCES public.client_documents(id) ON DELETE SET NULL,
+    signed_at date,
+    valid_from date,
+    valid_until date,
+    notes text,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_client_documents_user ON public.client_documents(user_id);
+CREATE INDEX IF NOT EXISTS idx_client_documents_client ON public.client_documents(client_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_client_documents_project ON public.client_documents(project_id) WHERE project_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_client_documents_supersedes ON public.client_documents(supersedes_document_id) WHERE supersedes_document_id IS NOT NULL;
+
+
 --
 -- PostgreSQL database dump complete
 --

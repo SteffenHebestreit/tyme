@@ -232,19 +232,35 @@ export class StorageService {
   /**
    * Upload a file.
    * Files are stored as: user-{userId}/{category}/{timestamp}-{filename}
+   *
+   * An optional subPath is inserted between the category and the filename —
+   * user-{userId}/{category}/{subPath}/{timestamp}-{filename} — so callers that
+   * store many files of one category can partition them by entity (e.g.
+   * `clients/{clientId}`) instead of relying on the timestamp alone to keep
+   * keys apart. The parameter is trailing and optional, so existing five-
+   * argument callers are unaffected.
    */
   async uploadFile(
     userId: string,
     fileBuffer: Buffer,
     originalFilename: string,
     mimetype: string,
-    category: 'receipts' | 'logos' | 'documents' | 'invoices' | 'exports' = 'receipts'
+    category: 'receipts' | 'logos' | 'documents' | 'invoices' | 'exports' = 'receipts',
+    subPath?: string
   ): Promise<{ url: string; filename: string; objectName: string }> {
     try {
       const bucket = await this.ensureUserBucket(userId);
       const timestamp = Date.now();
       const sanitizedFilename = originalFilename.replace(/[^a-zA-Z0-9.-]/g, '_');
-      const objectName = `${category}/${timestamp}-${sanitizedFilename}`;
+      // Sanitise each segment separately so the caller's '/' separators survive
+      // but nothing can climb out of the category prefix.
+      const sanitizedSubPath = (subPath || '')
+        .split('/')
+        .map((segment) => segment.replace(/[^a-zA-Z0-9.-]/g, '_'))
+        .filter((segment) => segment.length > 0 && segment !== '.' && segment !== '..')
+        .join('/');
+      const prefix = sanitizedSubPath ? `${category}/${sanitizedSubPath}` : category;
+      const objectName = `${prefix}/${timestamp}-${sanitizedFilename}`;
 
       await this.putObject(bucket, objectName, fileBuffer, mimetype);
       logger.info(`[Storage] Uploaded file: ${objectName} to bucket: ${bucket}`);

@@ -876,17 +876,25 @@ export class InvoiceController {
       timeEntriesResult.rows.forEach((entry: TimeEntryForInvoice) => {
         const projectId = entry.project_id || 'no-project';
         const hourlyRate = Number(entry.effective_rate) || 0;
-        
-        // Calculate hours from timestamps if duration_hours is NULL
-        let hours = Number(entry.duration_hours);
-        if (!hours && entry.date_start && entry.date_end) {
-          const durationMs = new Date(entry.date_end).getTime() - new Date(entry.date_start).getTime();
-          hours = durationMs / (1000 * 60 * 60);
-        }
-        hours = hours || 0;
+        const hours = Number(entry.duration_hours) || 0;
 
-        if (!projectSummaryMap.has(projectId)) {
-          projectSummaryMap.set(projectId, {
+        // Group by project AND rate. Rates change over time and entries are
+        // stamped with the rate agreed when the work happened, so one project
+        // can legitimately contribute several rates to the same invoice.
+        // Keying by project alone priced every hour at whichever rate the query
+        // happened to return first (ORDER BY entry_date, so the oldest) and
+        // silently mis-billed every hour logged after a rate change.
+        // A running timer has duration 0 and would otherwise open its own group
+        // (its rate can differ from the billed ones), producing a 0.00 line item
+        // that only exists because a timer happened to be running.
+        if (hours <= 0) return;
+
+        // toFixed pins the key to the economic rate: 100 and 100.00 arrive from
+        // pg as different strings but must not become two line items.
+        const groupKey = `${projectId}::${hourlyRate.toFixed(2)}`;
+
+        if (!projectSummaryMap.has(groupKey)) {
+          projectSummaryMap.set(groupKey, {
             project_id: projectId,
             project_name: entry.project_name || 'Ohne Projekt',
             total_hours: 0,
@@ -895,20 +903,46 @@ export class InvoiceController {
           });
         }
 
-        const summary = projectSummaryMap.get(projectId)!;
+        const summary = projectSummaryMap.get(groupKey)!;
         summary.total_hours += hours;
         summary.time_entry_ids.push(entry.id);
       });
 
       // Create one line item per project
-      const lineItems = Array.from(projectSummaryMap.values()).map(summary => {
+      const summaries = Array.from(projectSummaryMap.values());
+      // A project split across several rates needs the rate in the description,
+      // otherwise the invoice shows the same project name twice with no
+      // explanation of why the unit prices differ.
+      const splitProjects = new Set(
+        summaries
+          .map(s => s.project_id)
+          .filter((id, idx, all) => all.indexOf(id) !== idx)
+      );
+
+      // Keep a project's rate-split lines next to each other; the map is keyed
+      // by project+rate, so insertion order alone would interleave projects.
+      summaries.sort((a, b) =>
+        a.project_name === b.project_name
+          ? a.hourly_rate - b.hourly_rate
+          : a.project_name.localeCompare(b.project_name)
+      );
+
+      const rateLabel = (rate: number) =>
+        new Intl.NumberFormat('de-DE', {
+          style: 'currency',
+          currency: invoice.currency || 'EUR',
+        }).format(rate);
+
+      const lineItems = summaries.map(summary => {
         const totalPrice = summary.hourly_rate * summary.total_hours;
-        
+
         return {
           id: crypto.randomUUID(),
           invoice_id: invoice.id,
           created_at: new Date(),
-          description: summary.project_name,
+          description: splitProjects.has(summary.project_id)
+            ? `${summary.project_name} (${rateLabel(summary.hourly_rate)}/h)`
+            : summary.project_name,
           quantity: summary.total_hours,
           unit_price: summary.hourly_rate,
           total_price: totalPrice,
